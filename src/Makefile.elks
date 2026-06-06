@@ -1,5 +1,11 @@
 # Lua 5.1 Makefile for ELKS, compiled using OpenWatcom C
 # make -f Makefile.elks
+#
+# Default build:
+#   Lua + gfx API + VGA Mode X backend
+#
+# Nano-X build:
+#   make -f Makefile.elks USE_NANOX_BACKEND=1 NANOX_DIR=/root/microwindows/src
 
 ifndef TOPDIR
 $(error ELKS TOPDIR is not defined)
@@ -19,23 +25,33 @@ CLBASE += -Wc,-fpc -Wc,-zev -Wc,-zls -Wc,-x -Wc,-wcd=303
 
 WARNINGS = -Wall -Wextra
 
-INCLUDES = -I$(TOPDIR)/libc/include -I$(TOPDIR)/elks/include
+INCLUDES = -I.
+INCLUDES += -I$(TOPDIR)/libc/include -I$(TOPDIR)/elks/include
 INCLUDES += -I$(TOPDIR)/libc/include/watcom
 
 DEFINES = -D__ELKS__ -DLUA_ANSI
 
 # ------------------------------------------------------------
-# Optional Nano-X client backend. Switches graphics from VGA to Nano-X when
-# USE_NANOX_BACKEND=1.
-# NANOX_DIR must point to the Nano-X source directory containing:
-# include/ nanox/ drivers/
-# Example:
-#   make -f Makefile.elks USE_NANOX_BACKEND=1 NANOX_DIR=/root/microwindows/src
+# Graphics backend selection
+#
+# Default:
+#   USE_NANOX_BACKEND=0
+#   graphics.c uses VGA Mode X through vgax.c/vgax.h
+#
+# Nano-X:
+#   USE_NANOX_BACKEND=1
+#   graphics.c uses Nano-X client calls
+#   vgax.c is not linked
 # ------------------------------------------------------------
+
 USE_NANOX_BACKEND ?= 0
 NANOX_DIR ?= YOUR_MICROWINDOWS_DIRECTORY/src
 
+GFX_OBJS = graphics.obj
+NANOX_CLIENT_OBJS =
+
 ifeq ($(USE_NANOX_BACKEND),1)
+
 DEFINES += -DUSE_NANOX_BACKEND
 DEFINES += -DELKS=1 -DUNIX=1 -DNONETWORK=0
 DEFINES += -DMWPIXEL_FORMAT=MWPF_PALETTE
@@ -46,7 +62,15 @@ INCLUDES += -I$(NANOX_DIR)/nanox
 INCLUDES += -I$(NANOX_DIR)/drivers
 
 NANOX_CLIENT_OBJS = nx_client.obj nx_nxproto.obj nx_nxutil.obj nx_osdep.obj
+
+else
+
+# Default fullscreen VGA Mode X backend
+GFX_OBJS += vgax.obj
+
 endif
+
+LOCALFLAGS = -DNDEBUG
 
 CFLAGS = -Os $(CLBASE) $(WARNINGS) $(INCLUDES) $(DEFINES) $(LOCALFLAGS)
 
@@ -60,19 +84,15 @@ LDBASE += -Wl,option -Wl,heapsize=512
 LDFLAGS = $(LDBASE)
 LDLIBS = -Wl,library -Wl,$(TOPDIR)/libc/libcl.lib
 
-OBJS = $(SRCS:.c=.obj) $(NANOX_CLIENT_OBJS)
-
-%.obj: %.c
-	$(CC) -c $(CFLAGS) -o $*.obj $<
-
 BINDIR = ../elks-bin
-LOCALFLAGS = -DNDEBUG
 PROG = lua luac
 
 SRCS = mem.c lmathlib.c lapi.c lcode.c ldebug.c ldo.c ldump.c lfunc.c lgc.c llex.c lmem.c \
 	lobject.c lopcodes.c lparser.c lstate.c lstring.c ltable.c ltm.c \
 	lundump.c lvm.c lzio.c lauxlib.c lbaselib.c ldblib.c liolib.c loslib.c ltablib.c \
 	lstrlib.c loadlib.c linit.c
+
+OBJS = $(SRCS:.c=.obj) $(GFX_OBJS) $(NANOX_CLIENT_OBJS)
 
 all: $(PROG)
 
@@ -84,6 +104,9 @@ lua: $(OBJS) lua.obj
 luac: $(OBJS) luac.obj print.obj
 	$(LD) $(LDFLAGS) -o $@ $(OBJS) luac.obj print.obj $(LDLIBS)
 
+%.obj: %.c
+	$(CC) -c $(CFLAGS) -o $*.obj $<
+
 lua.obj: lua.c
 	$(CC) -c $(CFLAGS) -o lua.obj $<
 
@@ -92,6 +115,16 @@ luac.obj: luac.c
 
 print.obj: print.c
 	$(CC) -c $(CFLAGS) -o print.obj $<
+
+# Local graphics files
+
+graphics.obj: graphics.c graphics.h
+	$(CC) -c $(CFLAGS) -o graphics.obj graphics.c
+
+vgax.obj: vgax.c vgax.h
+	$(CC) -c $(CFLAGS) -o vgax.obj vgax.c
+
+# Nano-X client objects
 
 nx_client.obj: $(NANOX_DIR)/nanox/client.c
 	$(CC) -c $(CFLAGS) -o $@ $<
