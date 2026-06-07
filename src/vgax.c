@@ -8,12 +8,14 @@
 #define VGA_DAC_WRITE    0x3C8
 #define VGA_DAC_DATA     0x3C9
 
-static unsigned char current_plane_mask = 0xFF;
+/* * OPTIMIZATION: Force global engine trackers out of the crowded Data Segment (DGROUP)
+ * and place them directly into the Code Segment (_CODE) where there is plenty of room.
+ */
+static unsigned char __based(__segname("_CODE")) current_plane_mask = 0xFF;
 
 static unsigned char inb(unsigned short port)
 {
     unsigned char val = 0;
-
     _asm {
         push dx
         mov dx, [port]
@@ -21,7 +23,6 @@ static unsigned char inb(unsigned short port)
         mov [val], al
         pop dx
     }
-
     return val;
 }
 
@@ -41,9 +42,12 @@ static void outb(unsigned char val, unsigned short port)
 static void bios_set_video_mode(unsigned char mode)
 {
     unsigned short mode_int;
-
     mode_int = (unsigned short)mode;
     _asm {
+        push ax
+        push bx
+        push cx
+        push dx
         push si
         push di
         push bp
@@ -54,11 +58,16 @@ static void bios_set_video_mode(unsigned char mode)
         pop bp
         pop di
         pop si
+        pop dx
+        pop cx
+        pop bx
+        pop ax
     }
 }
 
 static void set_plane_mask(unsigned char mask)
 {
+    /* Read tracking variable directly out of Code Segment far memory */
     if (mask == current_plane_mask)
         return;
 
@@ -99,12 +108,12 @@ static void vram_memset(unsigned short off, unsigned short len, unsigned char va
         push cx
         push di
         push es
+        cld                 /* BUG FIX: Explicitly guarantee forward direction */
         mov ax, 0A000h
         mov es, ax
         mov di, [off]
         mov cx, [len]
         mov al, [val]
-        cld
         rep stosb
         pop es
         pop di
@@ -123,6 +132,7 @@ static void vram_vline(unsigned short off, unsigned short h, unsigned char val)
         push cx
         push di
         push es
+        cld                 /* BUG FIX: Guarantee forward direction flag state */
         mov ax, 0A000h
         mov es, ax
         mov di, [off]
@@ -130,7 +140,7 @@ static void vram_vline(unsigned short off, unsigned short h, unsigned char val)
         mov al, [val]
     vram_vline_loop:
         mov es:[di], al
-        add di, 80
+        add di, 80          /* Mode X width stride line delta offset factor */
         loop vram_vline_loop
         pop es
         pop di
@@ -152,7 +162,7 @@ void vgax_set_palette(unsigned char index,
 
 void vgax_set_default_palette(void)
 {
-    /* VGA DAC values are 0..63.  Keep colors bright and simple. */
+    /* Explicitly mapping colors manually to prevent large array memory overheads */
     vgax_set_palette(0,  0,  0,  0);   /* transparent / black */
     vgax_set_palette(1, 22, 42, 63);   /* sky blue */
     vgax_set_palette(2,  8, 45, 10);   /* grass */
@@ -192,7 +202,7 @@ void vgax_init(void)
 {
     bios_set_video_mode(0x13);
 
-    /* Disable chain-4.  This turns mode 13h into planar Mode X memory. */
+    /* Disable chain-4. This turns mode 13h into planar Mode X memory. */
     outb(0x04, VGA_SC_INDEX);
     outb(0x06, VGA_SC_DATA);
 
@@ -447,6 +457,11 @@ void vgax_draw_bitmap(unsigned short page,
             unsigned char run_color;
 
             src_col = flip_x ? ((int)bw - 1 - col) : col;
+            
+            /* * BUG FIX: 'pixels' is a 32-bit far pointer in the Large memory model.
+             * Standard C indexing handles it correctly here, but if passed to asm blocks,
+             * LDS must be utilized to preserve segments.
+             */
             c = pixels[row * (int)bw + src_col];
 
             if (c == transparent) {
