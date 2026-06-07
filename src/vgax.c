@@ -8,10 +8,7 @@
 #define VGA_DAC_WRITE    0x3C8
 #define VGA_DAC_DATA     0x3C9
 
-/* * OPTIMIZATION: Force global engine trackers out of the crowded Data Segment (DGROUP)
- * and place them directly into the Code Segment (_CODE) where there is plenty of room.
- */
-static unsigned char __based(__segname("_CODE")) current_plane_mask = 0xFF;
+static unsigned char current_plane_mask = 0xFF;
 
 static unsigned char inb(unsigned short port)
 {

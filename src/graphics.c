@@ -283,6 +283,10 @@ static unsigned short modex_page_from_id(int page)
     return VGAX_PAGE0;
 }
 
+/* Slow fallback.
+ * This copies pixel-by-pixel by reading one Mode X plane and writing one pixel.
+ * Later this should be replaced by an optimized vgax_copy_rect() in vgax.c.
+ */
 static void modex_copy_pixels(unsigned short src, unsigned short dst,
                               int x, int y, int w, int h)
 {
