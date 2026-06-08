@@ -2,7 +2,7 @@
 #define VGAX_INCLUDED
 
 /*
- * vgax.h - tiny VGA Mode X helper library for ELKS / gcc-ia16.
+ * vgax.h - tiny VGA Mode X library for ELKS / OWC
  *
  * Target mode: 320x240, 256 colors, planar Mode X.
  * Page size:   320*240/4 = 19200 bytes per VGA plane.
@@ -88,5 +88,12 @@ void vgax_draw_tilemap(unsigned short page,
                        unsigned char map_h,
                        int scroll_x,
                        int scroll_y);
+					   
+void vgax_copy_rect(unsigned short src_page,
+                    unsigned short dst_page,
+                    int x,
+                    int y,
+                    int w,
+                    int h);
 
 #endif /* VGAX_H */

@@ -213,61 +213,6 @@ static int nx_process_events(unsigned int timeout_ms)
 static unsigned short mx_visible_page = VGAX_PAGE0;
 static unsigned short mx_draw_page = VGAX_PAGE1;
 
-#define VGA_GC_INDEX 0x3CE
-#define VGA_GC_DATA  0x3CF
-
-static void gfx_outb(unsigned char val, unsigned short port)
-{
-    _asm {
-        push ax
-        push dx
-        mov dx, [port]
-        mov al, [val]
-        out dx, al
-        pop dx
-        pop ax
-    }
-}
-
-static void modex_set_read_plane(unsigned char plane)
-{
-    gfx_outb(0x04, VGA_GC_INDEX);
-    gfx_outb((unsigned char)(plane & 3), VGA_GC_DATA);
-}
-
-static unsigned char modex_vram_peek(unsigned short off)
-{
-    unsigned char val = 0;
-
-    _asm {
-        push ax
-        push di
-        push es
-        mov ax, 0A000h
-        mov es, ax
-        mov di, [off]
-        mov al, es:[di]
-        mov [val], al
-        pop es
-        pop di
-        pop ax
-    }
-
-    return val;
-}
-
-static unsigned char modex_read_pixel(unsigned short page, int x, int y)
-{
-    unsigned short off;
-
-    if (x < 0 || y < 0 || x >= VGAX_W || y >= VGAX_H)
-        return 0;
-
-    off = (unsigned short)(page + y * VGAX_BYTES_PER_LINE + (x >> 2));
-    modex_set_read_plane((unsigned char)(x & 3));
-    return modex_vram_peek(off);
-}
-
 static unsigned short modex_page_from_id(int page)
 {
     if (page == GFX_PAGE_DRAW)
@@ -283,41 +228,10 @@ static unsigned short modex_page_from_id(int page)
     return VGAX_PAGE0;
 }
 
-/* Slow fallback.
- * This copies pixel-by-pixel by reading one Mode X plane and writing one pixel.
- * Later this should be replaced by an optimized vgax_copy_rect() in vgax.c.
- */
 static void modex_copy_pixels(unsigned short src, unsigned short dst,
                               int x, int y, int w, int h)
 {
-    int yy;
-
-    if (w <= 0 || h <= 0)
-        return;
-
-    if (x < 0) {
-        w += x;
-        x = 0;
-    }
-    if (y < 0) {
-        h += y;
-        y = 0;
-    }
-    if (x >= VGAX_W || y >= VGAX_H || w <= 0 || h <= 0)
-        return;
-    if (x + w > VGAX_W)
-        w = VGAX_W - x;
-    if (y + h > VGAX_H)
-        h = VGAX_H - y;
-
-    for (yy = 0; yy < h; yy++) {
-        int xx;
-        for (xx = 0; xx < w; xx++) {
-            unsigned char c;
-            c = modex_read_pixel(src, x + xx, y + yy);
-            vgax_plot(dst, x + xx, y + yy, c);
-        }
-    }
+    vgax_copy_rect(src, dst, x, y, w, h);
 }
 
 #endif /* USE_NANOX_BACKEND */

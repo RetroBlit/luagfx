@@ -7,6 +7,8 @@
 #define VGA_INPUT_STAT   0x3DA
 #define VGA_DAC_WRITE    0x3C8
 #define VGA_DAC_DATA     0x3C9
+#define VGA_GC_INDEX     0x3CE
+#define VGA_GC_DATA      0x3CF
 
 static unsigned char current_plane_mask = 0xFF;
 
@@ -76,6 +78,48 @@ static void set_plane_mask(unsigned char mask)
 static void set_write_plane(unsigned char plane)
 {
     set_plane_mask((unsigned char)(1 << (plane & 3)));
+}
+
+static void set_read_plane(unsigned char plane)
+{
+    outb(0x04, VGA_GC_INDEX);
+    outb((unsigned char)(plane & 3), VGA_GC_DATA);
+}
+
+static void vram_copy_bytes(unsigned short src,
+                            unsigned short dst,
+                            unsigned short len)
+{
+    if (len == 0 || src == dst)
+        return;
+
+    _asm {
+        push ax
+        push cx
+        push si
+        push di
+        push ds
+        push es
+
+        cld
+
+        mov si, [src]
+        mov di, [dst]
+        mov cx, [len]
+
+        mov ax, 0A000h
+        mov ds, ax
+        mov es, ax
+
+        rep movsb
+
+        pop es
+        pop ds
+        pop di
+        pop si
+        pop cx
+        pop ax
+    }
 }
 
 static void vram_poke(unsigned short off, unsigned char val)
@@ -568,6 +612,76 @@ void vgax_draw_tilemap(unsigned short page,
             sx = col * tw - scroll_x;
             sy = row * th - scroll_y;
             vgax_draw_tile(page, ts, tile, sx, sy);
+        }
+    }
+}
+
+void vgax_copy_rect(unsigned short src_page,
+                    unsigned short dst_page,
+                    int x,
+                    int y,
+                    int w,
+                    int h)
+{
+    int last;
+    int plane;
+
+    if (w <= 0 || h <= 0)
+        return;
+
+    /* Same source/destination page and same coordinates: nothing to do. */
+    if (src_page == dst_page)
+        return;
+
+    if (x < 0) {
+        w += x;
+        x = 0;
+    }
+
+    if (y < 0) {
+        h += y;
+        y = 0;
+    }
+
+    if (x >= VGAX_W || y >= VGAX_H || w <= 0 || h <= 0)
+        return;
+
+    if (x + w > VGAX_W)
+        w = VGAX_W - x;
+
+    if (y + h > VGAX_H)
+        h = VGAX_H - y;
+
+    last = x + w - 1;
+
+    for (plane = 0; plane < 4; plane++) {
+        int first;
+        int count;
+        int row;
+        unsigned short src_off;
+        unsigned short dst_off;
+
+        first = x + ((plane - (x & 3) + 4) & 3);
+        if (first > last)
+            continue;
+
+        count = ((last - first) >> 2) + 1;
+
+        src_off = (unsigned short)(src_page +
+                                   y * VGAX_BYTES_PER_LINE +
+                                   (first >> 2));
+
+        dst_off = (unsigned short)(dst_page +
+                                   y * VGAX_BYTES_PER_LINE +
+                                   (first >> 2));
+
+        set_read_plane((unsigned char)plane);
+        set_write_plane((unsigned char)plane);
+
+        for (row = 0; row < h; row++) {
+            vram_copy_bytes((unsigned short)(src_off + row * VGAX_BYTES_PER_LINE),
+                            (unsigned short)(dst_off + row * VGAX_BYTES_PER_LINE),
+                            (unsigned short)count);
         }
     }
 }
