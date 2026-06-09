@@ -6,6 +6,11 @@
 #
 # Nano-X build:
 #   make -f Makefile.elks USE_NANOX_BACKEND=1 NANOX_DIR=/root/microwindows/src
+#
+# Optimization selection:
+#   make -f Makefile.elks OPT=size
+#   make -f Makefile.elks OPT=speed
+#   make -f Makefile.elks OPT=none
 
 ifndef TOPDIR
 $(error ELKS TOPDIR is not defined)
@@ -30,6 +35,40 @@ INCLUDES += -I$(TOPDIR)/libc/include -I$(TOPDIR)/elks/include
 INCLUDES += -I$(TOPDIR)/libc/include/watcom
 
 DEFINES = -D__ELKS__ -DLUA_ANSI
+
+# ------------------------------------------------------------
+# Optimization selection
+#
+# Default:
+#   OPT=size
+#
+# Size build:
+#   make -f Makefile.elks OPT=size
+#
+# Speed build:
+#   make -f Makefile.elks OPT=speed
+#
+# No optimization / easier debugging:
+#   make -f Makefile.elks OPT=none
+# ------------------------------------------------------------
+
+OPT ?= speed
+
+ifeq ($(OPT),size)
+OPTFLAGS = -Os
+endif
+
+ifeq ($(OPT),speed)
+OPTFLAGS = -Wc,-oneatx
+endif
+
+ifeq ($(OPT),none)
+OPTFLAGS =
+endif
+
+ifeq ($(filter $(OPT),size speed none),)
+$(error Unknown OPT '$(OPT)'. Use OPT=size, OPT=speed, or OPT=none)
+endif
 
 # ------------------------------------------------------------
 # Graphics backend selection
@@ -72,7 +111,7 @@ endif
 
 LOCALFLAGS = -DNDEBUG
 
-CFLAGS = -Os $(CLBASE) $(WARNINGS) $(INCLUDES) $(DEFINES) $(LOCALFLAGS)
+CFLAGS = $(OPTFLAGS) $(CLBASE) $(WARNINGS) $(INCLUDES) $(DEFINES) $(LOCALFLAGS)
 
 LDBASE = -bos2 -s
 LDBASE += -Wl,option -Wl,dosseg
