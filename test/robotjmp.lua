@@ -8,10 +8,27 @@ Details:
   - PAGE2/background cache via gfx.set_background()
   - each frame restores only the old/current player rectangle
   - autopilot movement, no keyboard input required
---]]
-local WIDTH  = 320
-local HEIGHT = 240
+  - initial loading can be very slow (1-2 minutes on Amstrad 1640)
 
+Optimizations:
+  - Separate pre-flipped frames are provided for each visual state:
+	   frame 0 = walking right
+	   frame 1 = walking left
+	   frame 2 = flying right
+	   frame 3 = flying left
+	  
+	   The left-facing frames could be produced at draw time with flip_x=true,
+	   but runtime flipping forces the backend to use the slower generic blitter.
+	   By generating the flipped frames once at startup and always drawing with
+	   flip_x=false, the Mode X backend can use the fast compiled sprite path.
+  - Left-facing frames are generated once at startup from the right-facing
+    frames, so the source code stays smaller while runtime drawing still uses
+    separate pre-flipped frames.
+  - Explicit two-page background synchronization to prevent uninitialized VRAM flicker (not strictly needed).
+--]]
+
+local WIDTH = 320
+local HEIGHT = 240
 local TILE_SIZE = 16
 local MAP_W = 64
 local MAP_H = 15
@@ -19,7 +36,7 @@ local PLAYER_W = 16
 local PLAYER_H = 20
 
 local TILESET_ID = 1
-local PLAYER_ID  = 1
+local PLAYER_ID = 1
 
 -- 0 = run forever
 local MAX_FRAMES = 0
@@ -35,9 +52,9 @@ local player_y = 48
 local player_vy = 0
 local player_dir = 1
 local player_grounded = false
-
 local v_delay = 2
 local ground_wait = 0
+
 local drawn_frames = 0
 local game_running = true
 
@@ -49,23 +66,10 @@ local page_has_player = { false, false }
 local page_player_x = { 0, 0 }
 local page_player_y = { 0, 0 }
 
-local function ifloor(x)
-  return math.floor(x)
-end
-
-local function imin(a, b)
-  if a < b then return a end
-  return b
-end
-
-local function imax(a, b)
-  if a > b then return a end
-  return b
-end
-
-local function byte(c)
-  return string.char(c)
-end
+local function ifloor(x) return math.floor(x) end
+local function imin(a, b) if a < b then return a end return b end
+local function imax(a, b) if a > b then return a end return b end
+local function byte(c) return string.char(c) end
 
 local function color_from_char(c)
   if c == "." then return 0 end  -- transparent
@@ -87,6 +91,7 @@ local function sprite_from_ascii(src)
   for y = 1, PLAYER_H do
     local row = src[y]
     local x
+
     for x = 1, PLAYER_W do
       local ch = string.sub(row, x, x)
       out[n] = byte(color_from_char(ch))
@@ -104,6 +109,7 @@ local function flip_sprite_string(src)
 
   for y = 0, PLAYER_H - 1 do
     local x
+
     for x = 0, PLAYER_W - 1 do
       local src_x = PLAYER_W - 1 - x
       local idx = y * PLAYER_W + src_x + 1
@@ -122,19 +128,19 @@ local function make_tiles()
 
   for t = 0, 3 do
     local y
+
     for y = 0, TILE_SIZE - 1 do
       local x
+
       for x = 0, TILE_SIZE - 1 do
         local c = 0
 
         if t == 0 then
           -- empty / space
           c = 0
-
         elseif t == 1 then
           -- warm alien rock ground
           c = 3
-
           if y == 0 then
             c = 15
           elseif y == 1 then
@@ -157,7 +163,6 @@ local function make_tiles()
           if (x == 3 and y > 5) or (x == 11 and y > 7) then
             c = 9
           end
-
         elseif t == 2 then
           -- sci-fi metal/copper panel, not brick-like
           c = 12
@@ -198,17 +203,13 @@ local function make_tiles()
           end
 
           -- rivets
-          if (x == 3 and y == 3) or
-             (x == 12 and y == 3) or
-             (x == 3 and y == 12) or
-             (x == 12 and y == 12) then
+          if (x == 3 and y == 3) or (x == 12 and y == 3) or
+             (x == 3 and y == 12) or (x == 12 and y == 12) then
             c = 10
           end
-
         else
           -- warm energy platform / alien tech bridge
           c = 9
-
           if y == 0 then
             c = 15
           elseif y == 1 then
@@ -239,15 +240,16 @@ local function make_tiles()
     end
   end
 
-  gfx.tileset(TILESET_ID, TILE_SIZE, TILE_SIZE, 4, gfx.NO_TRANSPARENT or 255,
-              table.concat(out))
+  gfx.tileset(TILESET_ID, TILE_SIZE, TILE_SIZE, 4,
+              gfx.NO_TRANSPARENT or 255, table.concat(out))
 end
 
 local function make_sprites()
   -- Tiny robot: 16x20, transparent background.
-  -- Frame 0 = clearly facing right
-  -- Frame 1 = clearly facing left
-  -- Frame 2 = flying/rocket frame with exhaust
+  -- Frame 0 = Facing Right
+  -- Frame 1 = Facing Left (Generated procedurally below via flip_sprite_string)
+  -- Frame 2 = Flying Right (Rocket frame with exhaust)
+  -- Frame 3 = Flying Left (Generated procedurally below via flip_sprite_string)
   local right_pat = {
     ".......Y........",
     "......DD........",
@@ -271,30 +273,7 @@ local function make_sprites()
     "................"
   }
 
-  local left_pat = {
-    "........Y.......",
-    "........DD......",
-    "......DDDDD.....",
-    ".....DMMMMMD....",
-    ".....DMRRMMD....",
-    ".....DMMMMMD....",
-    "......DMLLMD....",
-    ".......DDDD.....",
-    "......CCCCCC....",
-    "....CCMMMMMMC...",
-    "...CC.MMMMMM.C..",
-    "..C...MMRRMM....",
-    "......MMMMMM....",
-    ".....MM....M....",
-    "....MM.....MM...",
-    "....CC.....BB...",
-    "...CC......BBB..",
-    "..CC........CC..",
-    "..CC........CCC.",
-    "................"
-  }
-
-  local jump_pat = {
+  local jump_right_pat = {
     ".......Y........",
     "......DDD.......",
     ".....DDDDD......",
@@ -317,11 +296,20 @@ local function make_sprites()
     "................"
   }
 
+  -- NOTE:
+  -- We store separate frames for right, left, flying-right and flying-left.
+  -- The left frames could be drawn with runtime flip_x, but that would force
+  -- the Mode X backend to use the slower generic sprite path. By prebuilding
+  -- these frames once at startup and always drawing with flip_x=false, the C
+  -- backend can use the fast compiled sprite blitter for every player frame.
   local right = sprite_from_ascii(right_pat)
-  local left  = sprite_from_ascii(left_pat)
-  local jump  = sprite_from_ascii(jump_pat)
+  local left = flip_sprite_string(right)
+  local jump_right = sprite_from_ascii(jump_right_pat)
+  local jump_left = flip_sprite_string(jump_right)
 
-  gfx.sprite(PLAYER_ID, PLAYER_W, PLAYER_H, 3, 0, right .. left .. jump)
+  -- Compiled as a single 4-frame asset block.
+  gfx.sprite(PLAYER_ID, PLAYER_W, PLAYER_H, 4, 0,
+             right .. left .. jump_right .. jump_left)
 end
 
 local function level_index(col, row)
@@ -381,18 +369,15 @@ local function is_solid_at(px, py)
   if px < 0 or px >= MAP_W * TILE_SIZE then
     return true
   end
-
   if py < 0 then
     return false
   end
-
   if py >= MAP_H * TILE_SIZE then
     return true
   end
 
   tx = ifloor(px / TILE_SIZE)
   ty = ifloor(py / TILE_SIZE)
-
   return get_tile(tx, ty) ~= 0
 end
 
@@ -437,7 +422,6 @@ local function draw_static_decor_full()
   gfx.fill(34, 168, 34, 40, 4)
   gfx.fill(46, 160, 12, 48, 14)
   gfx.fill(52, 164, 6, 16, 15)
-
   gfx.fill(148, 188, 82, 20, 9)
   gfx.fill(168, 172, 42, 36, 4)
   gfx.fill(184, 162, 10, 46, 14)
@@ -447,7 +431,6 @@ local function draw_static_decor_full()
   gfx.fill(92, 190, 6, 18, 8)
   gfx.fill(94, 184, 2, 6, 15)
   gfx.fill(102, 194, 4, 14, 14)
-
   gfx.fill(276, 188, 6, 20, 8)
   gfx.fill(278, 180, 2, 8, 15)
   gfx.fill(286, 196, 4, 12, 14)
@@ -461,8 +444,10 @@ end
 
 local function draw_level_full()
   local row
+
   for row = 0, MAP_H - 1 do
     local col
+
     for col = 0, MAP_W - 1 do
       local t = get_tile(col, row)
       if t ~= 0 then
@@ -480,12 +465,18 @@ local function draw_static_full()
 end
 
 local function draw_player()
+  -- OPTIMIZATION: All flip_x arguments are strictly false.
+  -- We specify pre-calculated frame offsets to utilize the fast compiled C blitter loop.
   if not player_grounded then
-    gfx.draw_sprite(PLAYER_ID, player_x, player_y, 2, player_dir < 0)
+    if player_dir < 0 then
+      gfx.draw_sprite(PLAYER_ID, player_x, player_y, 3, false) -- Frame 3: Flying Left
+    else
+      gfx.draw_sprite(PLAYER_ID, player_x, player_y, 2, false) -- Frame 2: Flying Right
+    end
   elseif player_dir < 0 then
-    gfx.draw_sprite(PLAYER_ID, player_x, player_y, 1, false)
+    gfx.draw_sprite(PLAYER_ID, player_x, player_y, 1, false) -- Frame 1: Pre-baked Left
   else
-    gfx.draw_sprite(PLAYER_ID, player_x, player_y, 0, false)
+    gfx.draw_sprite(PLAYER_ID, player_x, player_y, 0, false) -- Frame 0: Pre-baked Right
   end
 end
 
@@ -599,7 +590,6 @@ local function game_init()
   player_vy = 0
   player_dir = 1
   player_grounded = false
-
   v_delay = 2
   ground_wait = 0
   drawn_frames = 0
@@ -609,8 +599,16 @@ local function game_init()
   page_has_player[1] = false
   page_has_player[2] = false
 
-  -- Draw static world once, then cache it in PAGE2 and both flip pages.
+  -- Write static scene data over BOTH hardware blit pages
+  -- explicitly before locking down the snapshot cache. Prevents old garbage data
+  -- left over in VRAM from flashing for a single frame.
   draw_static_full()
+  gfx.present() -- Present first static page and switch draw page
+
+  draw_static_full()
+  gfx.present() -- Present second static page and switch back
+
+  -- Cache the synchronized scene as the background plane template.
   gfx.set_background()
 end
 
@@ -641,14 +639,12 @@ end
 
 local function main()
   game_init()
-
   while game_running do
     game_frame()
   end
 end
 
 local ok, err = pcall(main)
-
 gfx.close()
 
 if not ok then
