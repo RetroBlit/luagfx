@@ -38,6 +38,30 @@ struct vgax_tileset {
     const unsigned char *pixels;      /* count * tile_w * tile_h */
 };
 
+struct vgax_sprite_run {
+    unsigned char y;
+    unsigned char xbyte;
+    unsigned char len;
+    unsigned char color;
+};
+
+struct vgax_sprite_phase {
+    unsigned short start[4];
+    unsigned short count[4];
+};
+
+struct vgax_compiled_sprite {
+    unsigned char w;
+    unsigned char h;
+    unsigned char frames;
+    unsigned char transparent;
+    unsigned char compiled;
+
+    const struct vgax_sprite_phase *phases; /* frames * 4 */
+    const struct vgax_sprite_run *runs;
+    unsigned short run_count;
+};
+
 void vgax_init(void);
 void vgax_text_mode(void);
 
@@ -95,5 +119,21 @@ void vgax_copy_rect(unsigned short src_page,
                     int y,
                     int w,
                     int h);
+					
+int vgax_compile_sprite(struct vgax_compiled_sprite *out,
+                        const unsigned char *pixels,
+                        unsigned char w,
+                        unsigned char h,
+                        unsigned char frames,
+                        unsigned char transparent,
+                        struct vgax_sprite_phase *phase_buf,
+                        struct vgax_sprite_run *run_buf,
+                        unsigned short max_runs);
+
+void vgax_draw_compiled_sprite(unsigned short page,
+                               const struct vgax_compiled_sprite *spr,
+                               int x,
+                               int y,
+                               int frame);
 
 #endif /* VGAX_H */

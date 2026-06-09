@@ -529,6 +529,162 @@ void vgax_draw_bitmap(unsigned short page,
     }
 }
 
+int vgax_compile_sprite(struct vgax_compiled_sprite *out,
+                        const unsigned char *pixels,
+                        unsigned char w,
+                        unsigned char h,
+                        unsigned char frames,
+                        unsigned char transparent,
+                        struct vgax_sprite_phase *phase_buf,
+                        struct vgax_sprite_run *run_buf,
+                        unsigned short max_runs)
+{
+    unsigned short run_count;
+    int frame;
+    int phase;
+
+    if (out == 0 || pixels == 0 || phase_buf == 0 || run_buf == 0)
+        return -1;
+    if (w == 0 || h == 0 || frames == 0)
+        return -1;
+
+    run_count = 0;
+
+    for (frame = 0; frame < (int)frames; frame++) {
+        unsigned int frame_base;
+
+        frame_base = (unsigned int)frame * (unsigned int)w * (unsigned int)h;
+
+        for (phase = 0; phase < 4; phase++) {
+            struct vgax_sprite_phase *ph;
+            int plane;
+
+            ph = &phase_buf[frame * 4 + phase];
+
+            for (plane = 0; plane < 4; plane++) {
+                int row;
+
+                ph->start[plane] = run_count;
+
+                for (row = 0; row < (int)h; row++) {
+                    int col;
+
+                    col = (plane - phase + 4) & 3;
+
+                    while (col < (int)w) {
+                        unsigned char c;
+                        unsigned char len;
+                        unsigned char xbyte;
+                        int next_col;
+
+                        c = pixels[frame_base + row * (int)w + col];
+
+                        if (c == transparent) {
+                            col += 4;
+                            continue;
+                        }
+
+                        xbyte = (unsigned char)((phase + col) >> 2);
+                        len = 1;
+                        next_col = col + 4;
+
+                        while (next_col < (int)w) {
+                            unsigned char c2;
+
+                            c2 = pixels[frame_base + row * (int)w + next_col];
+
+                            if (c2 == transparent || c2 != c)
+                                break;
+
+                            len++;
+                            next_col += 4;
+                        }
+
+                        if (run_count >= max_runs)
+                            return -1;
+
+                        run_buf[run_count].y = (unsigned char)row;
+                        run_buf[run_count].xbyte = xbyte;
+                        run_buf[run_count].len = len;
+                        run_buf[run_count].color = c;
+                        run_count++;
+
+                        col = next_col;
+                    }
+                }
+
+                ph->count[plane] = (unsigned short)(run_count - ph->start[plane]);
+            }
+        }
+    }
+
+    out->w = w;
+    out->h = h;
+    out->frames = frames;
+    out->transparent = transparent;
+    out->compiled = 1;
+    out->phases = phase_buf;
+    out->runs = run_buf;
+    out->run_count = run_count;
+
+    return 0;
+}
+
+void vgax_draw_compiled_sprite(unsigned short page,
+                               const struct vgax_compiled_sprite *spr,
+                               int x,
+                               int y,
+                               int frame)
+{
+    int phase;
+    int plane;
+    int xbase;
+
+    if (spr == 0 || !spr->compiled)
+        return;
+
+    if (frame < 0 || frame >= (int)spr->frames)
+        frame = 0;
+
+    /* This fast path assumes the whole sprite is visible.
+       Clipped sprites should fall back to vgax_draw_bitmap(). */
+    if (x < 0 || y < 0)
+        return;
+    if (x + (int)spr->w > VGAX_W || y + (int)spr->h > VGAX_H)
+        return;
+
+    phase = x & 3;
+    xbase = x >> 2;
+
+    for (plane = 0; plane < 4; plane++) {
+        const struct vgax_sprite_phase *ph;
+        unsigned short i;
+        unsigned short start;
+        unsigned short count;
+
+        ph = &spr->phases[frame * 4 + phase];
+
+        start = ph->start[plane];
+        count = ph->count[plane];
+
+        set_write_plane((unsigned char)plane);
+
+        for (i = 0; i < count; i++) {
+            const struct vgax_sprite_run *r;
+            unsigned short off;
+
+            r = &spr->runs[start + i];
+
+            off = (unsigned short)(page +
+                                   (y + (int)r->y) * VGAX_BYTES_PER_LINE +
+                                   xbase +
+                                   (int)r->xbyte);
+
+            vram_memset(off, r->len, r->color);
+        }
+    }
+}
+
 void vgax_draw_sprite(unsigned short page,
                       const struct vgax_sprite *spr,
                       int x,

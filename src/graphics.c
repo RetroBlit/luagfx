@@ -28,6 +28,11 @@ struct gfx_sprite_slot {
     unsigned char frames;
     unsigned char transparent;
     const unsigned char *pixels;
+
+#ifndef USE_NANOX_BACKEND
+    unsigned char mx_compiled;
+    struct vgax_compiled_sprite mx_sprite;
+#endif
 };
 
 struct gfx_tileset_slot {
@@ -210,6 +215,15 @@ static int nx_process_events(unsigned int timeout_ms)
 
 #else /* VGA Mode X backend */
 
+#define GFX_MX_MAX_SPRITE_PHASES 64
+#define GFX_MX_MAX_SPRITE_RUNS   2048
+
+static struct vgax_sprite_phase mx_sprite_phases[GFX_MX_MAX_SPRITE_PHASES];
+static struct vgax_sprite_run mx_sprite_runs[GFX_MX_MAX_SPRITE_RUNS];
+
+static unsigned short mx_sprite_phase_used = 0;
+static unsigned short mx_sprite_run_used = 0;
+
 static unsigned short mx_visible_page = VGAX_PAGE0;
 static unsigned short mx_draw_page = VGAX_PAGE1;
 
@@ -334,6 +348,9 @@ int gfx_open(int w, int h)
     mx_visible_page = VGAX_PAGE0;
     mx_draw_page = VGAX_PAGE1;
 
+    mx_sprite_phase_used = 0;
+    mx_sprite_run_used = 0;
+
     if (w <= 0)
         w = VGAX_W;
     if (h <= 0)
@@ -358,6 +375,10 @@ int gfx_open(int w, int h)
                    GFX_CAP_TILES |
                    GFX_CAP_TILEMAP;
 #endif
+
+    memset(sprites, 0, sizeof(sprites));
+    memset(tilesets, 0, sizeof(tilesets));
+    memset(tilemaps, 0, sizeof(tilemaps));
 
     gfx_opened = 1;
     gfx_err = "no error";
@@ -566,6 +587,44 @@ int gfx_define_sprite(int id, int w, int h, int frames,
     sprites[id].frames = (unsigned char)frames;
     sprites[id].transparent = (unsigned char)transparent;
     sprites[id].pixels = pixels;
+
+#ifndef USE_NANOX_BACKEND
+    sprites[id].mx_compiled = 0;
+
+    {
+        unsigned short phase_need;
+        unsigned short phase_left;
+        unsigned short run_left;
+
+        phase_need = (unsigned short)(frames * 4);
+        phase_left = (unsigned short)(GFX_MX_MAX_SPRITE_PHASES -
+                                      mx_sprite_phase_used);
+        run_left = (unsigned short)(GFX_MX_MAX_SPRITE_RUNS -
+                                    mx_sprite_run_used);
+
+        if (phase_need <= phase_left && run_left > 0) {
+            if (vgax_compile_sprite(&sprites[id].mx_sprite,
+                                    pixels,
+                                    (unsigned char)w,
+                                    (unsigned char)h,
+                                    (unsigned char)frames,
+                                    (unsigned char)transparent,
+                                    &mx_sprite_phases[mx_sprite_phase_used],
+                                    &mx_sprite_runs[mx_sprite_run_used],
+                                    run_left) == 0) {
+                sprites[id].mx_compiled = 1;
+
+                mx_sprite_phase_used =
+                    (unsigned short)(mx_sprite_phase_used + phase_need);
+
+                mx_sprite_run_used =
+                    (unsigned short)(mx_sprite_run_used +
+                                     sprites[id].mx_sprite.run_count);
+            }
+        }
+    }
+#endif
+
     return 0;
 }
 
@@ -590,8 +649,19 @@ void gfx_draw_sprite(int id, int x, int y, int frame, int flip_x)
 #ifdef USE_NANOX_BACKEND
     draw_bitmap_generic(p, s->w, s->h, s->transparent, x, y, flip_x);
 #else
-    vgax_draw_bitmap(mx_draw_page, p, s->w, s->h,
-                     s->transparent, x, y, flip_x);
+    if (s->mx_compiled && !flip_x &&
+        x >= 0 && y >= 0 &&
+        x + (int)s->w <= gfx_w &&
+        y + (int)s->h <= gfx_h) {
+        vgax_draw_compiled_sprite(mx_draw_page,
+                                  &s->mx_sprite,
+                                  x,
+                                  y,
+                                  frame);
+    } else {
+        vgax_draw_bitmap(mx_draw_page, p, s->w, s->h,
+                         s->transparent, x, y, flip_x);
+    }
 #endif
 }
 
