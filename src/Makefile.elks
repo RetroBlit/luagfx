@@ -40,7 +40,7 @@ DEFINES = -D__ELKS__ -DLUA_ANSI
 # Optimization selection
 #
 # Default:
-#   OPT=size
+#   OPT=speed
 #
 # Size build:
 #   make -f Makefile.elks OPT=size
@@ -79,12 +79,12 @@ endif
 #
 # Nano-X:
 #   USE_NANOX_BACKEND=1
-#   graphics.c uses Nano-X client calls
+#   graphics.c uses nanox.c/nanox.h
 #   vgax.c is not linked
 # ------------------------------------------------------------
 
 USE_NANOX_BACKEND ?= 0
-NANOX_DIR ?= YOUR_MICROWINDOWS_DIRECTORY/src
+NANOX_DIR ?= /root/toncho11_microwindows/src
 
 GFX_OBJS = graphics.obj
 NANOX_CLIENT_OBJS =
@@ -99,6 +99,8 @@ DEFINES += -DSCREEN_PIXTYPE=MWPF_PALETTE
 INCLUDES += -I$(NANOX_DIR)/include
 INCLUDES += -I$(NANOX_DIR)/nanox
 INCLUDES += -I$(NANOX_DIR)/drivers
+
+GFX_OBJS += nanox.obj
 
 NANOX_CLIENT_OBJS = nx_client.obj nx_nxproto.obj nx_nxutil.obj nx_osdep.obj
 
@@ -162,6 +164,9 @@ graphics.obj: graphics.c graphics.h
 
 vgax.obj: vgax.c vgax.h
 	$(CC) -c $(CFLAGS) -o vgax.obj vgax.c
+
+nanox.obj: nanox.c nanox.h graphics.h
+	$(CC) -c $(CFLAGS) -o nanox.obj nanox.c
 
 # Nano-X client objects
 
