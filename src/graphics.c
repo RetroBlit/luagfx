@@ -455,6 +455,7 @@ void gfx_draw_sprite(int id, int x, int y, int frame, int flip_x)
     p = s->pixels + (unsigned int)frame * frame_size;
 
 #ifdef USE_NANOX_BACKEND
+    nanox_save_under(x, y, s->w, s->h);
     nanox_draw_bitmap(p, s->w, s->h, s->transparent, x, y, flip_x);
 #else
     if (s->mx_compiled &&
@@ -683,7 +684,7 @@ void gfx_restore(int x, int y, int w, int h)
         return;
 
 #ifdef USE_NANOX_BACKEND
-    nanox_restore(x, y, w, h);
+     nanox_restore_saved();
 #else
     modex_copy_pixels(VGAX_PAGE2, mx_draw_page, x, y, w, h);
 #endif

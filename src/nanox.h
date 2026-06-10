@@ -32,5 +32,7 @@ void nanox_set_background(void);
 void nanox_restore(int x, int y, int w, int h);
 void nanox_copy_rect(int src_page, int dst_page,
                      int x, int y, int w, int h);
+int nanox_save_under(int x, int y, int w, int h);
+void nanox_restore_saved(void);
 
 #endif

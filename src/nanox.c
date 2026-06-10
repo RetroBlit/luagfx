@@ -19,6 +19,16 @@
 #endif
 #endif
 
+static GR_WINDOW_ID nx_save_pix = 0;
+static int nx_save_alloc_w = 0;
+static int nx_save_alloc_h = 0;
+
+static int nx_save_valid = 0;
+static int nx_save_x = 0;
+static int nx_save_y = 0;
+static int nx_save_w = 0;
+static int nx_save_h = 0;
+
 static GR_WINDOW_ID nx_win = 0;
 static GR_GC_ID nx_gc = 0;
 
@@ -214,16 +224,13 @@ int nanox_open(int w, int h)
      * Used by nanox_set_background() and nanox_restore().
      */
     nx_bg = GrNewPixmap(w, h, 0);
-    if (!nx_bg) {
-        /*(nx_gc);
-        GrDestroyWindow(nx_win);
-        GrClose();
-        nx_gc = 0;
-        nx_win = 0;
-        nx_err = "cannot create Nano-X background pixmap";
-        return -1;*/
+    /*
+	 * Pixmap creation may fail on small ELKS/Nano-X systems.
+	 * That is OK: sprite trails are handled by the save-under buffer.
+	 */
+	if (!nx_bg) {
 		nx_err = "Nano-X background pixmap disabled";
-    }
+	}
 
     GrSelectEvents(nx_win,
                    GR_EVENT_MASK_EXPOSURE |
@@ -255,6 +262,14 @@ void nanox_close(void)
 
     if (nx_opened)
         GrClose();
+	
+	if (nx_save_pix) {
+		GrDestroyWindow(nx_save_pix);
+		nx_save_pix = 0;
+	}
+	nx_save_alloc_w = 0;
+	nx_save_alloc_h = 0;
+	nx_save_valid = 0;
 
     nx_win = 0;
     nx_gc = 0;
@@ -498,16 +513,21 @@ void nanox_set_background(void)
 
 void nanox_restore(int x, int y, int w, int h)
 {
-    if (!nx_opened || !nx_win || !nx_gc || !nx_bg)
+    if (!nx_opened || !nx_win || !nx_gc)
         return;
+
+    /*
+     * If Nano-X pixmap background exists, use it.
+     * Otherwise use the small save-under sprite buffer.
+     */
+    if (!nx_bg) {
+        nanox_restore_saved();
+        return;
+    }
 
     if (!clip_rect(&x, &y, &w, &h))
         return;
 
-    /*
-     * Restore rectangle from background pixmap to window.
-     * This fixes the Nano-X sprite trail problem.
-     */
     GrCopyArea(nx_win, nx_gc,
                x, y, w, h,
                nx_bg,
@@ -542,4 +562,71 @@ void nanox_copy_rect(int src_page, int dst_page,
     /*
      * Other page combinations are ignored in Nano-X backend.
      */
+}
+
+int nanox_save_under(int x, int y, int w, int h)
+{
+    if (!nx_opened || !nx_win || !nx_gc)
+        return -1;
+	
+	/*
+     * Nano-X is single-buffered here.
+     * Before saving the new sprite background, restore the previous one.
+     * This prevents the first/old sprite image from staying on screen.
+     */
+    if (nx_save_valid)
+        nanox_restore_saved();
+
+    if (!clip_rect(&x, &y, &w, &h))
+        return -1;
+
+    if (!nx_save_pix || w > nx_save_alloc_w || h > nx_save_alloc_h) {
+        if (nx_save_pix)
+            GrDestroyWindow(nx_save_pix);
+
+        nx_save_pix = GrNewPixmap(w, h, 0);
+        if (!nx_save_pix) {
+            nx_save_valid = 0;
+            nx_save_alloc_w = 0;
+            nx_save_alloc_h = 0;
+            return -1;
+        }
+
+        nx_save_alloc_w = w;
+        nx_save_alloc_h = h;
+    }
+
+    GrCopyArea(nx_save_pix, nx_gc,
+               0, 0, w, h,
+               nx_win,
+               x, y,
+               MWROP_COPY);
+
+    nx_save_x = x;
+    nx_save_y = y;
+    nx_save_w = w;
+    nx_save_h = h;
+    nx_save_valid = 1;
+
+    return 0;
+}
+
+void nanox_restore_saved(void)
+{
+    if (!nx_opened || !nx_win || !nx_gc)
+        return;
+
+    if (!nx_save_valid || !nx_save_pix)
+        return;
+
+    GrCopyArea(nx_win, nx_gc,
+               nx_save_x,
+               nx_save_y,
+               nx_save_w,
+               nx_save_h,
+               nx_save_pix,
+               0, 0,
+               MWROP_COPY);
+
+    nx_save_valid = 0;
 }
