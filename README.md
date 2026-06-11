@@ -1,4 +1,4 @@
-LuaGFX is a Lua 5.1.5 port for ELKS with an integrated small game engine and multiple graphics backends. It is designed for old retro computers such as 286, 386, 486, and later machines. A future MS-DOS port is also being considered.
+LuaGFX is a Lua 5.1.5 port for the 16 bit ELKS OS with an integrated small game engine and multiple graphics backends. It is designed for old retro computers such as 286, 386, 486, and later machines. A future MS-DOS port is also being considered.
 
 ## Supported backends
 
