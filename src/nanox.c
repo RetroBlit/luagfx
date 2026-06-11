@@ -220,17 +220,11 @@ int nanox_open(int w, int h)
     }
 
     /*
-     * Background cache pixmap.
-     * Used by nanox_set_background() and nanox_restore().
-     */
-    nx_bg = GrNewPixmap(w, h, 0);
-    /*
-	 * Pixmap creation may fail on small ELKS/Nano-X systems.
-	 * That is OK: sprite trails are handled by the save-under buffer.
+	 * Do not allocate a full-screen background pixmap on ELKS.
+	 * It is too expensive and may fail. We use a small save-under
+	 * pixmap per sprite instead.
 	 */
-	if (!nx_bg) {
-		nx_err = "Nano-X background pixmap disabled";
-	}
+	nx_bg = 0;
 
     GrSelectEvents(nx_win,
                    GR_EVENT_MASK_EXPOSURE |
@@ -251,25 +245,26 @@ int nanox_open(int w, int h)
 
 void nanox_close(void)
 {
-    if (nx_gc)
-        GrDestroyGC(nx_gc);
+    if (nx_save_pix) {
+        GrDestroyWindow(nx_save_pix);
+        nx_save_pix = 0;
+    }
+
+    nx_save_alloc_w = 0;
+    nx_save_alloc_h = 0;
+    nx_save_valid = 0;
 
     if (nx_bg)
         GrDestroyWindow(nx_bg);
+
+    if (nx_gc)
+        GrDestroyGC(nx_gc);
 
     if (nx_win)
         GrDestroyWindow(nx_win);
 
     if (nx_opened)
         GrClose();
-	
-	if (nx_save_pix) {
-		GrDestroyWindow(nx_save_pix);
-		nx_save_pix = 0;
-	}
-	nx_save_alloc_w = 0;
-	nx_save_alloc_h = 0;
-	nx_save_valid = 0;
 
     nx_win = 0;
     nx_gc = 0;
@@ -517,8 +512,8 @@ void nanox_restore(int x, int y, int w, int h)
         return;
 
     /*
-     * If Nano-X pixmap background exists, use it.
-     * Otherwise use the small save-under sprite buffer.
+     * If a full background pixmap exists, use it.
+     * Usually on ELKS nx_bg == 0, so use save-under instead.
      */
     if (!nx_bg) {
         nanox_restore_saved();
@@ -568,11 +563,10 @@ int nanox_save_under(int x, int y, int w, int h)
 {
     if (!nx_opened || !nx_win || !nx_gc)
         return -1;
-	
-	/*
-     * Nano-X is single-buffered here.
-     * Before saving the new sprite background, restore the previous one.
-     * This prevents the first/old sprite image from staying on screen.
+
+    /*
+     * Nano-X is single-buffered.
+     * Restore previous saved sprite area before saving the new one.
      */
     if (nx_save_valid)
         nanox_restore_saved();
@@ -584,7 +578,7 @@ int nanox_save_under(int x, int y, int w, int h)
         if (nx_save_pix)
             GrDestroyWindow(nx_save_pix);
 
-        nx_save_pix = GrNewPixmap(w, h, 0);
+        nx_save_pix = GrNewPixmapEx(w, h, 0, 0);
         if (!nx_save_pix) {
             nx_save_valid = 0;
             nx_save_alloc_w = 0;
