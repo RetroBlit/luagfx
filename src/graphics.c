@@ -684,7 +684,7 @@ void gfx_restore(int x, int y, int w, int h)
         return;
 
 #ifdef USE_NANOX_BACKEND
-     nanox_restore_saved();
+     nanox_restore(x, y, w, h);
 #else
     modex_copy_pixels(VGAX_PAGE2, mx_draw_page, x, y, w, h);
 #endif
