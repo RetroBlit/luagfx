@@ -17,7 +17,7 @@ LuaGFX is built with OpenWatcom C for ELKS.
 
 ## Acknowledgements
 
-This project is based on the Lua project and the work of Rafael Diniz port of Lua to ELKS.
+LuaGFX is based on the Lua project and the work of Rafael Diniz port of Lua to ELKS OS.
   
 # README for Lua 5.1
 
