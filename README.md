@@ -1,5 +1,10 @@
 LuaGFX is a Lua 5.1.5 port for the 16 bit ELKS OS with an integrated small game engine and multiple graphics backends. It is designed for old retro computers such as 286, 386, 486, and later machines. A future MS-DOS port is also being considered.
 
+<img src="https://github.com/user-attachments/assets/8853e5e9-532c-43e5-970c-b6a05f2d4c2a" width="49%" />  
+<img src="https://github.com/user-attachments/assets/bcc8d0cc-2152-4363-bd5f-c02399083dcf" width="49%" />
+
+Left image represents using the VGA mode X backend and the right image the Nano-X backend. Game resolution is 320 x 240 for both.
+
 ## Supported backends
 
 * VGA mode X - the primary and best-optimized backend. It is suitable for games using sprites, tiles, tilemaps, page flipping, and background restore. It is less suitable for random immediate-mode VGA drawing, such as many circles or arbitrary pixel-heavy graphics.
