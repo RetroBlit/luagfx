@@ -4,7 +4,7 @@ LuaGFX is a Lua 5.1.5 port for the 16 bit ELKS OS with an integrated small game 
 
 * VGA mode X - the primary and best-optimized backend. It is suitable for games using sprites, tiles, tilemaps, page flipping, and background restore. It is less suitable for random immediate-mode VGA drawing, such as many circles or arbitrary pixel-heavy graphics.
 * Nano-X - an optimized but secondary backend. It is mainly intended as a compatibility backend for running games under Nano-X. Performance is expected to be lower than the Mode X backend.
-* Direct VGA - planned, but currently unimplemented. In some cases direct VGA is faster than VGA mode X.
+* Direct VGA / Mode 13h — planned backend for simple linear-framebuffer drawing. It is expected to be useful for random pixel graphics, effects, circles, and simple demos. It is not the primary target for sprite/tile games because it lacks the page-flipping and background-page model used by the Mode X backend.
 
 The API is the same for all graphics backends, but performance and behavior may differ. It is best to choose the primary backend in advance, depending on the type of graphics your game needs and whether Nano-X compatibility is important.
 
