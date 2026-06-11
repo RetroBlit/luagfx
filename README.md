@@ -1,25 +1,24 @@
-This is a Lua 5.1.5 port for ELKS.
+LuaGFX is a Lua 5.1.5 port for ELKS with an integrated small game engine and multiple graphics backends. It is designed for old retro computers such as 286, 386, 486, and later machines. A future MS-DOS port is also being considered.
+
+## Supported backends
+
+* VGA mode X - the primary and best-optimized backend. It is suitable for games using sprites, tiles, tilemaps, page flipping, and background restore. It is less suitable for random immediate-mode VGA drawing, such as many circles or arbitrary pixel-heavy graphics.
+* Nano-X - an optimized but secondary backend. It is mainly intended as a compatibility backend for running games under Nano-X. Performance is expected to be lower than the Mode X backend.
+* Direct VGA - planned, but currently unimplemented. In some cases direct VGA is faster than VGA mode X.
+
+The API is the same for all graphics backends, but performance and behavior may differ. It is best to choose the primary backend in advance, depending on the type of graphics your game needs and whether Nano-X compatibility is important.
 
 ## Build notes
 
-Lua is built with OpenWatcom C for ELKS.
+LuaGFX is built with OpenWatcom C for ELKS.
 
-- Default ELKS build: `make`
-- Optional Nano-X graphics backend: `make USE_NANOX_BACKEND=1 NANOX_DIR=/path/to/microwindows/src`
+- Default ELKS build: `make -f Makefile.elks`
+- Nano-X graphics backend: `make USE_NANOX_BACKEND=1 NANOX_DIR=/path/to/microwindows/src`
 
-With the Nano-X backend enabled, the existing graphics helpers (`vga_init`,
-`plot_pixel`, `plot_line`, `sleep_ms`) run against a 320x200 Nano-X window
-instead of the raw VGA framebuffer. Existing scripts can still use
-`vga_init(0x13)` to open graphics mode and `vga_init(3)` to close it.
+## Acknowledgements
 
-Branches are: 
-https://github.com/rafael2k/lua/tree/lua-5.1 - Lua 5.1.5 with minimal patching to run on ELKS 
-https://github.com/rafael2k/lua/tree/lua-5.1i - Special integer-only Lua 5.1.5 (does not have most mathlib functions) 
-https://github.com/rafael2k/lua/tree/master - Tracking PUC-Rio upstream Lua (to become Lua 5.5), minimal patching for ELKS port
-
-![screenshot1](lua-capt.jpg)
-
-
+This project is based on the Lua project and the work of Rafael Diniz port of Lua to ELKS.
+  
 # README for Lua 5.1
 
 See INSTALL for installation instructions.
