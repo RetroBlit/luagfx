@@ -47,6 +47,24 @@ static const char *nx_err = "no error";
 
 static unsigned long soft_palette[256];
 
+static int nx_fg_valid = 0;
+static unsigned char nx_fg_color = 0;
+
+static GR_COLOR nx_color(unsigned char c)
+{
+    return (GR_COLOR)soft_palette[c];
+}
+
+static void nanox_set_fg(unsigned char c)
+{
+    if (nx_fg_valid && nx_fg_color == c)
+        return;
+
+    GrSetGCForeground(nx_gc, nx_color(c));
+    nx_fg_color = c;
+    nx_fg_valid = 1;
+}
+
 static unsigned long make_rgb63(int r, int g, int b)
 {
     unsigned long rr;
@@ -92,11 +110,6 @@ static void soft_palette_defaults(void)
     soft_palette[15] = make_rgb63(63,63, 63);
 }
 
-static GR_COLOR nx_color(unsigned char c)
-{
-    return (GR_COLOR)soft_palette[c];
-}
-
 static int clip_rect(int *x, int *y, int *w, int *h)
 {
     if (*w <= 0 || *h <= 0)
@@ -140,11 +153,6 @@ static void nanox_handle_event(GR_EVENT *ev)
 {
     switch (ev->type) {
     case GR_EVENT_TYPE_EXPOSURE:
-        /*
-         * Old code cleared the window here.
-         * That destroys the cached scene visually.
-         * Restore from background instead.
-         */
         nanox_redraw_from_background();
         GrFlush();
         break;
@@ -220,7 +228,7 @@ int nanox_open(int w, int h)
     }
 
     /*
-	 * Do not allocate a full-screen background pixmap on ELKS.
+	 * It is better not to allocate a full-screen background pixmap.
 	 * It is too expensive and may fail. We use a small save-under
 	 * pixmap per sprite instead.
 	 */
@@ -238,6 +246,8 @@ int nanox_open(int w, int h)
     nx_h = h;
     nx_opened = 1;
     nx_quit_requested = 0;
+	nx_fg_valid = 0;
+	nx_fg_color = 0;
     nx_err = "no error";
 
     return 0;
@@ -273,6 +283,8 @@ void nanox_close(void)
     nx_h = 0;
     nx_opened = 0;
     nx_quit_requested = 0;
+	nx_fg_valid = 0;
+	nx_fg_color = 0;
 }
 
 const char *nanox_error(void)
@@ -298,8 +310,8 @@ void nanox_present(void)
     GrFlush();
 
     /*
-     * Do not use timeout 0 here.
-     * On this Nano-X/ELKS build it can block until an event.
+     * TODO: investigate what timeout value is good.
+     * Nano-X can block until an event.
      * Timeout 1 lets the game continue even without mouse movement.
      */
     nanox_process_events(1);
@@ -321,7 +333,7 @@ void nanox_clear(int color)
         return;
 
     c = (unsigned char)color;
-    GrSetGCForeground(nx_gc, nx_color(c));
+    nanox_set_fg(c);
     GrFillRect(nx_win, nx_gc, 0, 0, nx_w, nx_h);
 }
 
@@ -336,7 +348,7 @@ void nanox_pixel(int x, int y, int color)
         return;
 
     c = (unsigned char)color;
-    GrSetGCForeground(nx_gc, nx_color(c));
+    nanox_set_fg(c);
     GrPoint(nx_win, nx_gc, x, y);
 }
 
@@ -348,7 +360,7 @@ void nanox_line(int x0, int y0, int x1, int y1, int color)
         return;
 
     c = (unsigned char)color;
-    GrSetGCForeground(nx_gc, nx_color(c));
+    nanox_set_fg(c);
     GrLine(nx_win, nx_gc, x0, y0, x1, y1);
 }
 
@@ -371,7 +383,7 @@ void nanox_hline(int x, int y, int w, unsigned char c)
     if (x + w > nx_w)
         w = nx_w - x;
 
-    GrSetGCForeground(nx_gc, nx_color(c));
+    nanox_set_fg(c);
     GrLine(nx_win, nx_gc, x, y, x + w - 1, y);
 }
 
@@ -394,7 +406,7 @@ static void nanox_vline(int x, int y, int h, unsigned char c)
     if (y + h > nx_h)
         h = nx_h - y;
 
-    GrSetGCForeground(nx_gc, nx_color(c));
+    nanox_set_fg(c);
     GrLine(nx_win, nx_gc, x, y, x, y + h - 1);
 }
 
@@ -424,7 +436,7 @@ void nanox_fill(int x, int y, int w, int h, int color)
         return;
 
     c = (unsigned char)color;
-    GrSetGCForeground(nx_gc, nx_color(c));
+    nanox_set_fg(c);
     GrFillRect(nx_win, nx_gc, x, y, w, h);
 }
 

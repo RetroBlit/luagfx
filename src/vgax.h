@@ -8,7 +8,7 @@
  * Page size:   320*240/4 = 19200 bytes per VGA plane.
  * Pages:       PAGE0, PAGE1, PAGE2 fit in 64 KiB VGA aperture.
  *
- * This is deliberately small: init, page flipping, primitives,
+ * It is deliberately small: init, page flipping, primitives,
  * tiles and sprites.  It avoids malloc and floating point.
  */
 

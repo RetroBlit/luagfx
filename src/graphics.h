@@ -2,7 +2,7 @@
 #define GRAPHICS_H
 
 /*
- * graphics.h - small Lua graphics backend API.
+ * graphics.h - small Lua graphics API.
  *
  * Runtime selection is intentionally removed:
  *   - default build              : fullscreen VGA Mode X backend

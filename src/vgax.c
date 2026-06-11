@@ -1,3 +1,6 @@
+/*
+Assembly style is OpenWatcom 16 bit
+*/
 #include "vgax.h"
 
 #define VGA_SC_INDEX     0x3C4
@@ -149,7 +152,7 @@ static void vram_memset(unsigned short off, unsigned short len, unsigned char va
         push cx
         push di
         push es
-        cld                 /* BUG FIX: Explicitly guarantee forward direction */
+        cld
         mov ax, 0A000h
         mov es, ax
         mov di, [off]
@@ -173,7 +176,7 @@ static void vram_vline(unsigned short off, unsigned short h, unsigned char val)
         push cx
         push di
         push es
-        cld                 /* BUG FIX: Guarantee forward direction flag state */
+        cld
         mov ax, 0A000h
         mov es, ax
         mov di, [off]
@@ -499,10 +502,6 @@ void vgax_draw_bitmap(unsigned short page,
 
             src_col = flip_x ? ((int)bw - 1 - col) : col;
             
-            /* * BUG FIX: 'pixels' is a 32-bit far pointer in the Large memory model.
-             * Standard C indexing handles it correctly here, but if passed to asm blocks,
-             * LDS must be utilized to preserve segments.
-             */
             c = pixels[row * (int)bw + src_col];
 
             if (c == transparent) {
