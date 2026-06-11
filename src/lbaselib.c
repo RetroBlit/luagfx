@@ -12,15 +12,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#ifdef USE_NANOX_BACKEND
-#include "nano-X.h"
-#ifndef MWRGB
-#define MWRGB(r,g,b) ((((unsigned long)(r)) << 16) | \
-                      (((unsigned long)(g)) << 8)  | \
-                      ((unsigned long)(b)))
-#endif
-#endif
-
 #define lbaselib_c
 #define LUA_LIB
 
@@ -28,11 +19,7 @@
 
 #include "lauxlib.h"
 #include "lualib.h"
-
-typedef unsigned char  byte;
-#ifndef USE_NANOX_BACKEND
-byte __far *VGA = (byte __far *)0xA0000000L;
-#endif
+#include "graphics.h"
 
 /*
 ** If your system does not support `stdout', you can just remove this function.
@@ -455,283 +442,307 @@ static int luaB_newproxy (lua_State *L) {
   return 1;
 }
 
+
 /*
-** Optional graphics backend for the extra Lua drawing functions.
+** Clean graphics API for Lua.
 **
-** Default build (no USE_NANOX_BACKEND):
-**   - vga_init(mode) keeps the original BIOS VGA mode-switch behavior.
-**   - plot_pixel/plot_line keep the original direct VGA framebuffer behavior.
-**   - sleep_ms(ms) keeps the original usleep-based delay.
-**   - close_graphics() switches back to text mode 3.
-**
-** Build with -DUSE_NANOX_BACKEND:
-**   - vga_init(0x13) opens a 320x200 Nano-X window for compatibility with
-**     existing Lua scripts.
-**   - vga_init(3) closes the Nano-X window for old-script compatibility.
-**   - plot_pixel/plot_line draw into that Nano-X window.
-**   - sleep_ms(ms) waits while also processing Nano-X events.
-**   - close_graphics() closes the Nano-X window and connection.
+** No old vga_init/plot_pixel compatibility is kept here.  lbaselib.c only
+** exposes a table named "gfx"; the real backend code is in graphics.c.
 */
 
-#ifdef USE_NANOX_BACKEND
+static int gfx_sprite_refs[GFX_MAX_SPRITES];
+static int gfx_tileset_refs[GFX_MAX_TILESETS];
+static int gfx_tilemap_refs[GFX_MAX_TILEMAPS];
+static int gfx_refs_ready = 0;
 
-static GR_WINDOW_ID nx_win = 0;
-static GR_GC_ID nx_gc = 0;
-static int nx_open = 0;
-static int nx_quit_requested = 0;
+static void gfx_refs_init(void) {
+  int i;
 
-static GR_COLOR map_vga_color_to_nanox(unsigned int c)
-{
-  static const GR_COLOR pal[16] = {
-    MWRGB(0,   0,   0),
-    MWRGB(0,   0,   170),
-    MWRGB(0,   170, 0),
-    MWRGB(0,   170, 170),
-    MWRGB(170, 0,   0),
-    MWRGB(170, 0,   170),
-    MWRGB(170, 85,  0),
-    MWRGB(170, 170, 170),
-    MWRGB(85,  85,  85),
-    MWRGB(85,  85,  255),
-    MWRGB(85,  255, 85),
-    MWRGB(85,  255, 255),
-    MWRGB(255, 85,  85),
-    MWRGB(255, 85,  255),
-    MWRGB(255, 255, 85),
-    MWRGB(255, 255, 255)
-  };
-
-  return pal[c & 15];
-}
-
-static void close_graphics_backend(void)
-{
-  if (!nx_open)
+  if (gfx_refs_ready)
     return;
 
-  if (nx_gc)
-    GrDestroyGC(nx_gc);
+  for (i = 0; i < GFX_MAX_SPRITES; i++)
+    gfx_sprite_refs[i] = LUA_NOREF;
+  for (i = 0; i < GFX_MAX_TILESETS; i++)
+    gfx_tileset_refs[i] = LUA_NOREF;
+  for (i = 0; i < GFX_MAX_TILEMAPS; i++)
+    gfx_tilemap_refs[i] = LUA_NOREF;
 
-  if (nx_win)
-    GrDestroyWindow(nx_win);
-
-  GrClose();
-
-  nx_win = 0;
-  nx_gc = 0;
-  nx_open = 0;
-  nx_quit_requested = 0;
+  gfx_refs_ready = 1;
 }
 
-static int luaB_vga_init(lua_State *L)
-{
-  lua_Number mode = luaL_checknumber(L, 1);
-  unsigned short int mode_int = (unsigned short int)mode;
+static int luaG_open(lua_State *L) {
+  int w = luaL_optint(L, 1, 320);
+  int h = luaL_optint(L, 2, 0);
 
-  if (mode_int == 3) {
-    close_graphics_backend();
-    return 0;
-  }
+  if (gfx_open(w, h) != 0)
+    return luaL_error(L, "%s", gfx_error());
 
-  if (nx_open)
-    return 0;
-
-  if (GrOpen() < 0)
-    return luaL_error(L, "cannot open Nano-X");
-
-  nx_win = GrNewWindow(GR_ROOT_WINDOW_ID,
-                       0, 0,
-                       320, 200,
-                       0,
-                       map_vga_color_to_nanox(0),
-                       map_vga_color_to_nanox(0));
-
-  nx_gc = GrNewGC();
-
-  GrSelectEvents(nx_win,
-                 GR_EVENT_MASK_EXPOSURE |
-                 GR_EVENT_MASK_KEY_DOWN |
-                 GR_EVENT_MASK_CLOSE_REQ);
-
-  GrMapWindow(nx_win);
-  GrFlush();
-
-  nx_open = 1;
-  nx_quit_requested = 0;
-
-  return 0;
+  lua_pushboolean(L, 1);
+  return 1;
 }
 
-static int luaB_close_graphics(lua_State *L)
-{
+static int luaG_close(lua_State *L) {
   (void)L;
-  close_graphics_backend();
+  gfx_close();
   return 0;
 }
 
-static void handle_nanox_event(GR_EVENT *ev)
-{
-  switch (ev->type) {
-    case GR_EVENT_TYPE_EXPOSURE:
-      if (nx_open)
-        GrClearWindow(nx_win, 0);
-      break;
-
-    case GR_EVENT_TYPE_CLOSE_REQ:
-      nx_quit_requested = 1;
-      break;
-
-    case GR_EVENT_TYPE_KEY_DOWN:
-      if (ev->keystroke.ch == 27 || ev->keystroke.ch == 'q')
-        nx_quit_requested = 1;
-      break;
-
-    default:
-      break;
-  }
-}
-
-static int process_nanox_events(lua_State *L, unsigned int timeout_ms)
-{
-  GR_EVENT ev;
-
-  if (!nx_open)
-    return 0;
-
-  memset(&ev, 0, sizeof(ev));
-
-  GrGetNextEventTimeout(&ev, timeout_ms);
-
-  if (ev.type != 0)
-    handle_nanox_event(&ev);
-
-  if (nx_quit_requested) {
-    close_graphics_backend();
-    return luaL_error(L, "Interrupted");
-  }
-
-  return 0;
-}
-
-#else
-
-static void set_vga_mode(unsigned short int mode_int)
-{
-  _asm{
-          push si
-          push di
-          push bp
-          push es
-          mov ax,[mode_int]
-          int 0x10
-          pop es
-          pop bp
-          pop di
-          pop si
-      }
-}
-
-static int luaB_vga_init(lua_State *L)
-{
-  lua_Number mode = luaL_checknumber(L, 1);
-  unsigned short int mode_int = (unsigned short int)mode;
-
-  set_vga_mode(mode_int);
-
-  return 0;
-}
-
-static int luaB_close_graphics(lua_State *L)
-{
+static int luaG_present(lua_State *L) {
   (void)L;
-  set_vga_mode(3);
+  gfx_present();
   return 0;
 }
 
-#endif
+static int luaG_sleep(lua_State *L) {
+  unsigned int ms = (unsigned int)luaL_checkint(L, 1);
 
-static int luaB_sleep_ms(lua_State *L)
-{
-  lua_Number number = luaL_checknumber(L, 1);
-  unsigned int ms = (unsigned int)number;
-
-#ifdef USE_NANOX_BACKEND
-  return process_nanox_events(L, ms);
-#else
-  usleep(1000 * ms);
-  return 0;
-#endif
-}
-
-
-static int luaB_plot_pixel(lua_State *L)
-{
-  lua_Number number = luaL_checknumber(L, 1);
-  unsigned int x = (unsigned int)number;
-
-  number = luaL_checknumber(L, 2);
-  unsigned int y = (unsigned int)number;
-
-  number = luaL_checknumber(L, 3);
-  unsigned int c = (unsigned int)number;
-
-#ifdef USE_NANOX_BACKEND
-  if (!nx_open)
-    return luaL_error(L, "graphics backend not initialized");
-
-  GrSetGCForeground(nx_gc, map_vga_color_to_nanox(c));
-  GrPoint(nx_win, nx_gc, x, y);
-#else
-  /*  y*320 = y*256 + y*64 = y*2^8 + y*2^6   */
-  VGA[(y<<8)+(y<<6)+x]=c;
-#endif
+  if (gfx_sleep_ms(ms) != 0)
+    return luaL_error(L, "%s", gfx_error());
 
   return 0;
 }
 
-static int luaB_plot_line(lua_State *L)
-{
-  lua_Number number = luaL_checknumber(L, 1);
-  unsigned int x0 = (unsigned int)number;
+static int luaG_clear(lua_State *L) {
+  int c = luaL_checkint(L, 1);
 
-  number = luaL_checknumber(L, 2);
-  unsigned int y0 = (unsigned int)number;
+  gfx_clear(c);
+  return 0;
+}
 
-  number = luaL_checknumber(L, 3);
-  unsigned int x1 = (unsigned int)number;
+static int luaG_pixel(lua_State *L) {
+  int x = luaL_checkint(L, 1);
+  int y = luaL_checkint(L, 2);
+  int c = luaL_checkint(L, 3);
 
-  number = luaL_checknumber(L, 4);
-  unsigned int y1 = (unsigned int)number;
+  gfx_pixel(x, y, c);
+  return 0;
+}
 
-  number = luaL_checknumber(L, 5);
-  unsigned int color = (unsigned int)number;
+static int luaG_line(lua_State *L) {
+  int x0 = luaL_checkint(L, 1);
+  int y0 = luaL_checkint(L, 2);
+  int x1 = luaL_checkint(L, 3);
+  int y1 = luaL_checkint(L, 4);
+  int c = luaL_checkint(L, 5);
 
-#ifdef USE_NANOX_BACKEND
-  if (!nx_open)
-    return luaL_error(L, "graphics backend not initialized");
+  gfx_line(x0, y0, x1, y1, c);
+  return 0;
+}
 
-  GrSetGCForeground(nx_gc, map_vga_color_to_nanox(color));
-  GrLine(nx_win, nx_gc, x0, y0, x1, y1);
-#else
-  {
-    int dx = abs((int)x1 - x0);
-    int sx = x0 < x1 ? 1 : -1;
-    int dy = abs((int)y1 - y0);
-    int sy = y0 < y1 ? 1 : -1;
-    int err = (int)(dx > dy ? dx : -dy) / 2;
-    int e2;
+static int luaG_rect(lua_State *L) {
+  int x = luaL_checkint(L, 1);
+  int y = luaL_checkint(L, 2);
+  int w = luaL_checkint(L, 3);
+  int h = luaL_checkint(L, 4);
+  int c = luaL_checkint(L, 5);
 
-    while (1) {
-      VGA[(y0<<8)+(y0<<6)+x0]=color;
-      if (x0 == x1 && y0 == y1) break;
-      e2 = err;
-      if (e2 > -dx) { err -= dy; x0 += sx; }
-      if (e2 < dy) { err += dx; y0 += sy; }
-    }
-  }
-#endif
+  gfx_rect(x, y, w, h, c);
+  return 0;
+}
+
+static int luaG_fill(lua_State *L) {
+  int x = luaL_checkint(L, 1);
+  int y = luaL_checkint(L, 2);
+  int w = luaL_checkint(L, 3);
+  int h = luaL_checkint(L, 4);
+  int c = luaL_checkint(L, 5);
+
+  gfx_fill(x, y, w, h, c);
+  return 0;
+}
+
+static int luaG_sprite(lua_State *L) {
+  int id = luaL_checkint(L, 1);
+  int w = luaL_checkint(L, 2);
+  int h = luaL_checkint(L, 3);
+  int frames = luaL_checkint(L, 4);
+  int transparent = luaL_checkint(L, 5);
+  size_t len;
+  const unsigned char *pixels;
+  size_t needed;
+
+  pixels = (const unsigned char *)luaL_checklstring(L, 6, &len);
+  needed = (size_t)w * (size_t)h * (size_t)frames;
+
+  luaL_argcheck(L, id >= 0 && id < GFX_MAX_SPRITES, 1,
+                "sprite id out of range");
+  luaL_argcheck(L, w > 0 && h > 0 && frames > 0, 2,
+                "invalid sprite size/frame count");
+  luaL_argcheck(L, len >= needed, 6,
+                "sprite data string is too small");
+
+  if (gfx_define_sprite(id, w, h, frames, transparent, pixels) != 0)
+    return luaL_error(L, "cannot define sprite");
+
+  gfx_refs_init();
+  luaL_unref(L, LUA_REGISTRYINDEX, gfx_sprite_refs[id]);
+  lua_pushvalue(L, 6);
+  gfx_sprite_refs[id] = luaL_ref(L, LUA_REGISTRYINDEX);
 
   return 0;
+}
+
+static int luaG_draw_sprite(lua_State *L) {
+  int id = luaL_checkint(L, 1);
+  int x = luaL_checkint(L, 2);
+  int y = luaL_checkint(L, 3);
+  int frame = luaL_optint(L, 4, 0);
+  int flip_x = lua_toboolean(L, 5);
+
+  gfx_draw_sprite(id, x, y, frame, flip_x);
+  return 0;
+}
+
+static int luaG_tileset(lua_State *L) {
+  int id = luaL_checkint(L, 1);
+  int tile_w = luaL_checkint(L, 2);
+  int tile_h = luaL_checkint(L, 3);
+  int count = luaL_checkint(L, 4);
+  int transparent = luaL_checkint(L, 5);
+  size_t len;
+  const unsigned char *pixels;
+  size_t needed;
+
+  pixels = (const unsigned char *)luaL_checklstring(L, 6, &len);
+  needed = (size_t)tile_w * (size_t)tile_h * (size_t)count;
+
+  luaL_argcheck(L, id >= 0 && id < GFX_MAX_TILESETS, 1,
+                "tileset id out of range");
+  luaL_argcheck(L, tile_w > 0 && tile_h > 0 && count > 0, 2,
+                "invalid tileset size/count");
+  luaL_argcheck(L, len >= needed, 6,
+                "tileset data string is too small");
+
+  if (gfx_define_tileset(id, tile_w, tile_h, count, transparent, pixels) != 0)
+    return luaL_error(L, "cannot define tileset");
+
+  gfx_refs_init();
+  luaL_unref(L, LUA_REGISTRYINDEX, gfx_tileset_refs[id]);
+  lua_pushvalue(L, 6);
+  gfx_tileset_refs[id] = luaL_ref(L, LUA_REGISTRYINDEX);
+
+  return 0;
+}
+
+static int luaG_draw_tile(lua_State *L) {
+  int tileset_id = luaL_checkint(L, 1);
+  int tile_id = luaL_checkint(L, 2);
+  int x = luaL_checkint(L, 3);
+  int y = luaL_checkint(L, 4);
+
+  gfx_draw_tile(tileset_id, tile_id, x, y);
+  return 0;
+}
+
+static int luaG_tilemap(lua_State *L) {
+  int id = luaL_checkint(L, 1);
+  int map_w = luaL_checkint(L, 2);
+  int map_h = luaL_checkint(L, 3);
+  int tileset_id = luaL_checkint(L, 4);
+  size_t len;
+  const unsigned char *map;
+  size_t needed;
+
+  map = (const unsigned char *)luaL_checklstring(L, 5, &len);
+  needed = (size_t)map_w * (size_t)map_h;
+
+  luaL_argcheck(L, id >= 0 && id < GFX_MAX_TILEMAPS, 1,
+                "tilemap id out of range");
+  luaL_argcheck(L, map_w > 0 && map_h > 0, 2,
+                "invalid tilemap size");
+  luaL_argcheck(L, len >= needed, 5,
+                "tilemap data string is too small");
+
+  if (gfx_define_tilemap(id, map_w, map_h, tileset_id, map) != 0)
+    return luaL_error(L, "cannot define tilemap");
+
+  gfx_refs_init();
+  luaL_unref(L, LUA_REGISTRYINDEX, gfx_tilemap_refs[id]);
+  lua_pushvalue(L, 5);
+  gfx_tilemap_refs[id] = luaL_ref(L, LUA_REGISTRYINDEX);
+
+  return 0;
+}
+
+static int luaG_draw_tilemap(lua_State *L) {
+  int map_id = luaL_checkint(L, 1);
+  int scroll_x = luaL_optint(L, 2, 0);
+  int scroll_y = luaL_optint(L, 3, 0);
+
+  gfx_draw_tilemap(map_id, scroll_x, scroll_y);
+  return 0;
+}
+
+static int luaG_set_background(lua_State *L) {
+  (void)L;
+  gfx_set_background();
+  return 0;
+}
+
+static int luaG_restore(lua_State *L) {
+  int x = luaL_checkint(L, 1);
+  int y = luaL_checkint(L, 2);
+  int w = luaL_checkint(L, 3);
+  int h = luaL_checkint(L, 4);
+
+  gfx_restore(x, y, w, h);
+  return 0;
+}
+
+static int luaG_copy_rect(lua_State *L) {
+  int src = luaL_checkint(L, 1);
+  int dst = luaL_checkint(L, 2);
+  int x = luaL_checkint(L, 3);
+  int y = luaL_checkint(L, 4);
+  int w = luaL_checkint(L, 5);
+  int h = luaL_checkint(L, 6);
+
+  gfx_copy_rect(src, dst, x, y, w, h);
+  return 0;
+}
+
+static const luaL_Reg gfx_funcs[] = {
+  {"open", luaG_open},
+  {"clear", luaG_clear},
+  {"pixel", luaG_pixel},
+  {"line", luaG_line},
+  {"rect", luaG_rect},
+  {"fill", luaG_fill},
+  {"present", luaG_present},
+  {"sleep", luaG_sleep},
+  {"close", luaG_close},
+  {"sprite", luaG_sprite},
+  {"draw_sprite", luaG_draw_sprite},
+  {"tileset", luaG_tileset},
+  {"draw_tile", luaG_draw_tile},
+  {"tilemap", luaG_tilemap},
+  {"draw_tilemap", luaG_draw_tilemap},
+  {"set_background", luaG_set_background},
+  {"restore", luaG_restore},
+  {"copy_rect", luaG_copy_rect},
+  {NULL, NULL}
+};
+
+static void luaopen_gfx_table(lua_State *L) {
+  luaL_register(L, "gfx", gfx_funcs);
+
+  lua_pushinteger(L, GFX_PAGE0);
+  lua_setfield(L, -2, "PAGE0");
+  lua_pushinteger(L, GFX_PAGE1);
+  lua_setfield(L, -2, "PAGE1");
+  lua_pushinteger(L, GFX_PAGE2);
+  lua_setfield(L, -2, "PAGE2");
+  lua_pushinteger(L, GFX_PAGE_DRAW);
+  lua_setfield(L, -2, "PAGE_DRAW");
+  lua_pushinteger(L, GFX_PAGE_VISIBLE);
+  lua_setfield(L, -2, "PAGE_VISIBLE");
+  lua_pushinteger(L, GFX_PAGE_BACKGROUND);
+  lua_setfield(L, -2, "PAGE_BACKGROUND");
+  lua_pushinteger(L, GFX_NO_TRANSPARENT);
+  lua_setfield(L, -2, "NO_TRANSPARENT");
+
+  lua_pop(L, 1);
 }
 
 static const luaL_Reg base_funcs[] = {
@@ -759,11 +770,6 @@ static const luaL_Reg base_funcs[] = {
   {"type", luaB_type},
   {"unpack", luaB_unpack},
   {"xpcall", luaB_xpcall},
-  {"vga_init", luaB_vga_init},
-  {"close_graphics", luaB_close_graphics},
-  {"plot_pixel", luaB_plot_pixel},
-  {"plot_line", luaB_plot_line},
-  {"sleep_ms", luaB_sleep_ms},  
   {NULL, NULL}
 };
 
@@ -924,6 +930,7 @@ static void base_open (lua_State *L) {
   lua_setglobal(L, "_G");
   /* open lib into global table */
   luaL_register(L, "_G", base_funcs);
+  luaopen_gfx_table(L);
   lua_pushliteral(L, LUA_VERSION);
   lua_setglobal(L, "_VERSION");  /* set global _VERSION */
   /* `ipairs' and `pairs' need auxiliary functions as upvalues */

@@ -1,112 +1,168 @@
 --[[
 3D rotating cube demo
 Developed by: Anton Andreev
+New gfx API version
+Optimized:
+  - no full-screen clear
+  - uses Lua math.sin / math.cos
+  - one old cube cache per flip page
 --]]
 
--- Initialize the VGA mode (320x200 256-color mode)
-vga_init(0x13)
+local WIDTH  = 320
+local HEIGHT = 200
 
--- Cube vertices (8 points in 3D space)
+gfx.open(WIDTH, HEIGHT)
+
 local cube = {
-{-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
-{-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1}
+  {-1, -1, -1}, { 1, -1, -1}, { 1,  1, -1}, {-1,  1, -1},
+  {-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1}
 }
 
--- Cube edges (pairs of indices)
 local edges = {
-  {1, 2}, {2, 3}, {3, 4}, {4, 1}, -- Back face
-  {5, 6}, {6, 7}, {7, 8}, {8, 5}, -- Front face
-  {1, 5}, {2, 6}, {3, 7}, {4, 8} -- Connecting edges
+  {1, 2}, {2, 3}, {3, 4}, {4, 1},
+  {5, 6}, {6, 7}, {7, 8}, {8, 5},
+  {1, 5}, {2, 6}, {3, 7}, {4, 8}
 }
 
-local angleX, angleY = 0, 0 -- Rotation angles
-local size = 40 -- Cube size
-local fov = 3 -- Field of view
+local angleX = 0
+local angleY = 0
 
--- Function to rotate around X-axis
-local function rotateX(x, y, z, angle)
-  local cosA, sinA = math.cos(angle), math.sin(angle)
-  return x, y * cosA - z * sinA, y * sinA + z * cosA
-end
+local size = 40
+local fov = 3
 
--- Function to rotate around Y-axis
-local function rotateY(x, y, z, angle)
-  local cosA, sinA = math.cos(angle), math.sin(angle)
-  return x * cosA + z * sinA, y, -x * sinA + z * cosA
-end
+local cx = WIDTH / 2
+local cy = HEIGHT / 2
 
--- Function to project 3D point to 2D
-local function project3D(x, y, z)
-  local scale = fov / (fov + z) -- Perspective projection
-  local screenX = x * scale * size + 160 -- Center at (160, 100)
-  local screenY = y * scale * size + 100
-  return screenX, screenY
-end
-
-local function main ()
-
-local old_transformed = {}
 local transformed = {}
 
-while true do
+-- One previous cube position per flip page.
+local old_for_page = {
+  {},
+  {}
+}
 
--- Rotate and project each vertex
-   for i, v in ipairs(cube) do
-     local x, y, z = v[1], v[2], v[3]
+local draw_page_index = 1
 
-     -- Apply both rotations
-     local rx, ry, rz = rotateX(x, y, z, angleX)
-     local finalX, finalY, finalZ = rotateY(rx, ry, rz, angleY)
+local function rotateX(x, y, z, angle)
+  local cosA = math.cos(angle)
+  local sinA = math.sin(angle)
 
-     -- Project after both rotations
-     local screenX, screenY = project3D(finalX, finalY, finalZ)
-
-     -- Store the transformed screen coordinates
-     if transformed[i] then
-        transformed[i][1] = screenX
-        transformed[i][2] = screenY
-     else
-        transformed[i] = {screenX, screenY}
-     end
-   end
-
--- Clear cube
-   for _, edge in ipairs(edges) do
-      local p1, p2 = old_transformed[edge[1]], old_transformed[edge[2]]
-      if p1 and p2 then
-         plot_line(p1[1], p1[2], p2[1], p2[2], 0)  -- black color
-      end
-   end
-
--- Draw cube edges
-   for _, edge in ipairs(edges) do
-      local p1, p2 = transformed[edge[1]], transformed[edge[2]]
-      plot_line(p1[1], p1[2], p2[1], p2[2], 15)  -- White color
-   end
-
--- Update rotation
-   --missing angle reset: if angle > 2 math.pi angle = 0
-   angleX = angleX + (5 / 100)
-   angleY = angleY + (3 / 100)
-
--- Save previous
-   for i = 1, #transformed do
-     if old_transformed[i] then
-        old_transformed[i][1] = transformed[i][1]
-        old_transformed[i][2] = transformed[i][2]
-     else
-        old_transformed[i] = {transformed[i][1], transformed[i][2]}
-     end
-   end
--- Delay to control speed
-   sleep_ms(20)
-
+  return x,
+         y * cosA - z * sinA,
+         y * sinA + z * cosA
 end
-end 
+
+local function rotateY(x, y, z, angle)
+  local cosA = math.cos(angle)
+  local sinA = math.sin(angle)
+
+  return x * cosA + z * sinA,
+         y,
+        -x * sinA + z * cosA
+end
+
+local function project3D(x, y, z)
+  local scale = fov / (fov + z)
+
+  local screenX = x * scale * size + cx
+  local screenY = y * scale * size + cy
+
+  -- Avoid 0.5 literal for your ELKS Lua parser.
+  return math.floor(screenX + 1 / 2),
+         math.floor(screenY + 1 / 2)
+end
+
+local function compute_cube()
+  for i, v in ipairs(cube) do
+    local x = v[1]
+    local y = v[2]
+    local z = v[3]
+
+    local rx, ry, rz = rotateX(x, y, z, angleX)
+    local fx, fy, fz = rotateY(rx, ry, rz, angleY)
+
+    local sx, sy = project3D(fx, fy, fz)
+
+    if transformed[i] then
+      transformed[i][1] = sx
+      transformed[i][2] = sy
+    else
+      transformed[i] = {sx, sy}
+    end
+  end
+end
+
+local function draw_cube(points, color)
+  for _, edge in ipairs(edges) do
+    local p1 = points[edge[1]]
+    local p2 = points[edge[2]]
+
+    if p1 and p2 then
+      gfx.line(p1[1], p1[2], p2[1], p2[2], color)
+    end
+  end
+end
+
+local function copy_points(dst, src)
+  for i = 1, #src do
+    if dst[i] then
+      dst[i][1] = src[i][1]
+      dst[i][2] = src[i][2]
+    else
+      dst[i] = {src[i][1], src[i][2]}
+    end
+  end
+end
+
+local function main()
+  -- Clear both Mode X pages once at startup.
+  gfx.clear(0)
+  gfx.present()
+  gfx.clear(0)
+  gfx.present()
+
+  while true do
+    local old = old_for_page[draw_page_index]
+
+    -- Erase only the cube previously drawn on this page.
+    draw_cube(old, 0)
+
+    -- Compute and draw new cube.
+    compute_cube()
+    draw_cube(transformed, 15)
+
+    -- Remember what this page now contains.
+    copy_points(old, transformed)
+
+    -- Show completed page.
+    gfx.present()
+
+    if draw_page_index == 1 then
+      draw_page_index = 2
+    else
+      draw_page_index = 1
+    end
+
+    angleX = angleX + 5 / 100
+    angleY = angleY + 3 / 100
+
+    if angleX > math.pi * 2 then
+      angleX = angleX - math.pi * 2
+    end
+
+    if angleY > math.pi * 2 then
+      angleY = angleY - math.pi * 2
+    end
+
+    --gfx.sleep(20)
+  end
+end
 
 local success, err = pcall(main)
 
+gfx.close()
+
 if not success then
-    vga_init(3)
-    print("Interrupted! Exiting gracefully.")
+  print("Interrupted! Exiting gracefully.")
+  print(err)
 end
