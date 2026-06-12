@@ -17,7 +17,7 @@ The API is the same for all graphics backends, but performance will differ. It i
 
 LuaGFX is built with OpenWatcom C for ELKS.
 
-- Default ELKS build: `make -f Makefile.elks`
+- Default ELKS build with VGA mode X backend: `make -f Makefile.elks`
 - Nano-X graphics backend: `make USE_NANOX_BACKEND=1 NANOX_DIR=/path/to/microwindows/src`
 
 ## Acknowledgements
