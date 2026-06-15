@@ -6,25 +6,30 @@ Details:
   - sci-fi / alien planet visual theme
   - static world drawn once
   - PAGE2/background cache via gfx.set_background()
-  - each frame restores only the old/current player rectangle
+  - each frame uses gfx.move_sprite() to restore the old player position
+    and draw the new player position in one Lua -> C call
   - autopilot movement, no keyboard input required
   - initial loading can be very slow (1-2 minutes on Amstrad 1640)
 
 Optimizations:
   - Separate pre-flipped frames are provided for each visual state:
-	   frame 0 = walking right
-	   frame 1 = walking left
-	   frame 2 = flying right
-	   frame 3 = flying left
-	  
-	   The left-facing frames could be produced at draw time with flip_x=true,
-	   but runtime flipping forces the backend to use the slower generic blitter.
-	   By generating the flipped frames once at startup and always drawing with
-	   flip_x=false, the Mode X backend can use the fast compiled sprite path.
+       frame 0 = walking right
+       frame 1 = walking left
+       frame 2 = flying right
+       frame 3 = flying left
+
+       The left-facing frames could be produced at draw time with flip_x=true,
+       but runtime flipping forces the backend to use the slower generic blitter.
+       By generating the flipped frames once at startup and always drawing with
+       flip_x=false, the Mode X backend can use the fast compiled sprite path.
   - Left-facing frames are generated once at startup from the right-facing
     frames, so the source code stays smaller while runtime drawing still uses
     separate pre-flipped frames.
-  - Explicit two-page background synchronization to prevent uninitialized VRAM flicker (not strictly needed).
+  - Explicit two-page background synchronization to prevent uninitialized VRAM flicker.
+  - gfx.move_sprite() combines:
+       gfx.restore(old_x, old_y, PLAYER_W, PLAYER_H)
+       gfx.draw_sprite(PLAYER_ID, player_x, player_y, frame, false)
+    into one C-side operation.
 --]]
 
 local WIDTH = 320
@@ -67,8 +72,6 @@ local page_player_x = { 0, 0 }
 local page_player_y = { 0, 0 }
 
 local function ifloor(x) return math.floor(x) end
-local function imin(a, b) if a < b then return a end return b end
-local function imax(a, b) if a > b then return a end return b end
 local function byte(c) return string.char(c) end
 
 local function color_from_char(c)
@@ -164,45 +167,37 @@ local function make_tiles()
             c = 9
           end
         elseif t == 2 then
-          -- sci-fi metal/copper panel, not brick-like
+          -- sci-fi metal/copper panel
           c = 12
 
-          -- dark outer frame
           if x == 0 or x == 15 or y == 0 or y == 15 then
             c = 11
           end
 
-          -- warm inner frame
           if x == 1 or x == 14 or y == 1 or y == 14 then
             c = 9
           end
 
-          -- top highlight
           if y == 2 and x > 1 and x < 14 then
             c = 15
           end
 
-          -- recessed center panel
           if x >= 3 and x <= 12 and y >= 4 and y <= 11 then
             c = 12
           end
 
-          -- center seam
           if y == 8 and x >= 3 and x <= 12 then
             c = 9
           end
 
-          -- warm energy stripe
           if y == 5 and x >= 5 and x <= 10 then
             c = 8
           end
 
-          -- small lights
           if y == 6 and (x == 6 or x == 9) then
             c = 15
           end
 
-          -- rivets
           if (x == 3 and y == 3) or (x == 12 and y == 3) or
              (x == 3 and y == 12) or (x == 12 and y == 12) then
             c = 10
@@ -228,7 +223,6 @@ local function make_tiles()
             end
           end
 
-          -- repeated tech supports
           if (x == 4 or x == 11) and y > 5 then
             c = 12
           end
@@ -245,11 +239,6 @@ local function make_tiles()
 end
 
 local function make_sprites()
-  -- Tiny robot: 16x20, transparent background.
-  -- Frame 0 = Facing Right
-  -- Frame 1 = Facing Left (Generated procedurally below via flip_sprite_string)
-  -- Frame 2 = Flying Right (Rocket frame with exhaust)
-  -- Frame 3 = Flying Left (Generated procedurally below via flip_sprite_string)
   local right_pat = {
     ".......Y........",
     "......DD........",
@@ -296,18 +285,11 @@ local function make_sprites()
     "................"
   }
 
-  -- NOTE:
-  -- We store separate frames for right, left, flying-right and flying-left.
-  -- The left frames could be drawn with runtime flip_x, but that would force
-  -- the Mode X backend to use the slower generic sprite path. By prebuilding
-  -- these frames once at startup and always drawing with flip_x=false, the C
-  -- backend can use the fast compiled sprite blitter for every player frame.
   local right = sprite_from_ascii(right_pat)
   local left = flip_sprite_string(right)
   local jump_right = sprite_from_ascii(jump_right_pat)
   local jump_left = flip_sprite_string(jump_right)
 
-  -- Compiled as a single 4-frame asset block.
   gfx.sprite(PLAYER_ID, PLAYER_W, PLAYER_H, 4, 0,
              right .. left .. jump_right .. jump_left)
 end
@@ -334,28 +316,23 @@ local function make_level()
     end
   end
 
-  -- Alien ground
   for x = 0, MAP_W - 1 do
     set_tile(x, 13, 1)
     set_tile(x, 14, 1)
   end
 
-  -- Floating alien-tech platforms
   for x = 7, 11 do
     set_tile(x, 10, 3)
   end
 
-  -- Metal/copper panel platform
   for x = 18, 23 do
     set_tile(x, 9, 2)
   end
 
-  -- Long warm energy bridge on the right
   for x = 30, 36 do
     set_tile(x, 11, 3)
   end
 
-  -- Small sci-fi blocks near the ground
   set_tile(3, 12, 2)
   set_tile(4, 12, 2)
   set_tile(42, 12, 2)
@@ -382,7 +359,6 @@ local function is_solid_at(px, py)
 end
 
 local function draw_static_decor_full()
-  -- Warm stars
   gfx.fill(18, 18, 2, 2, 15)
   gfx.fill(44, 42, 1, 1, 8)
   gfx.fill(78, 20, 1, 1, 15)
@@ -396,7 +372,6 @@ local function draw_static_decor_full()
   gfx.fill(132, 88, 2, 2, 8)
   gfx.fill(244, 104, 1, 1, 15)
 
-  -- Large warm distant planet
   gfx.fill(232, 18, 46, 6, 9)
   gfx.fill(224, 24, 62, 8, 4)
   gfx.fill(218, 32, 74, 12, 6)
@@ -404,20 +379,17 @@ local function draw_static_decor_full()
   gfx.fill(226, 54, 56, 8, 3)
   gfx.fill(238, 62, 34, 4, 9)
 
-  -- Planet warm bands / highlights
   gfx.fill(226, 28, 52, 2, 15)
   gfx.fill(222, 38, 66, 2, 8)
   gfx.fill(228, 48, 54, 2, 14)
   gfx.fill(240, 58, 28, 2, 15)
 
-  -- Small amber moon
   gfx.fill(46, 28, 18, 4, 14)
   gfx.fill(42, 32, 26, 8, 3)
   gfx.fill(46, 40, 18, 4, 9)
   gfx.fill(50, 34, 4, 2, 15)
   gfx.fill(60, 36, 3, 2, 4)
 
-  -- Warm alien mountains / horizon
   gfx.fill(18, 184, 62, 24, 9)
   gfx.fill(34, 168, 34, 40, 4)
   gfx.fill(46, 160, 12, 48, 14)
@@ -427,7 +399,6 @@ local function draw_static_decor_full()
   gfx.fill(184, 162, 10, 46, 14)
   gfx.fill(190, 166, 4, 14, 15)
 
-  -- Warm alien crystals / energy vents
   gfx.fill(92, 190, 6, 18, 8)
   gfx.fill(94, 184, 2, 6, 15)
   gfx.fill(102, 194, 4, 14, 14)
@@ -435,7 +406,6 @@ local function draw_static_decor_full()
   gfx.fill(278, 180, 2, 8, 15)
   gfx.fill(286, 196, 4, 12, 14)
 
-  -- Small antenna/base
   gfx.fill(14, 176, 4, 32, 12)
   gfx.fill(8, 172, 16, 4, 15)
   gfx.fill(10, 168, 4, 4, 8)
@@ -458,51 +428,30 @@ local function draw_level_full()
 end
 
 local function draw_static_full()
-  -- black/warm space background
   gfx.clear(0)
   draw_static_decor_full()
   draw_level_full()
 end
 
-local function draw_player()
-  -- OPTIMIZATION: All flip_x arguments are strictly false.
-  -- We specify pre-calculated frame offsets to utilize the fast compiled C blitter loop.
+local function current_player_frame()
+  -- All frames are pre-flipped, so flip_x is always false.
+  -- This keeps the Mode X backend on the compiled sprite path.
   if not player_grounded then
     if player_dir < 0 then
-      gfx.draw_sprite(PLAYER_ID, player_x, player_y, 3, false) -- Frame 3: Flying Left
+      return 3 -- flying left
     else
-      gfx.draw_sprite(PLAYER_ID, player_x, player_y, 2, false) -- Frame 2: Flying Right
+      return 2 -- flying right
     end
   elseif player_dir < 0 then
-    gfx.draw_sprite(PLAYER_ID, player_x, player_y, 1, false) -- Frame 1: Pre-baked Left
+    return 1 -- walking left
   else
-    gfx.draw_sprite(PLAYER_ID, player_x, player_y, 0, false) -- Frame 0: Pre-baked Right
+    return 0 -- walking right
   end
 end
 
-local function restore_old_player_on_page(page_index)
-  local old_x
-  local old_y
-  local min_x
-  local min_y
-  local max_x
-  local max_y
-
-  if not page_has_player[page_index + 1] then
-    return
-  end
-
-  old_x = page_player_x[page_index + 1]
-  old_y = page_player_y[page_index + 1]
-
-  -- Restore the union of old and new player rectangles.
-  -- This is safer for fast horizontal movement.
-  min_x = imin(old_x, player_x) - 8
-  min_y = imin(old_y, player_y) - 4
-  max_x = imax(old_x + PLAYER_W, player_x + PLAYER_W) + 8
-  max_y = imax(old_y + PLAYER_H, player_y + PLAYER_H) + 4
-
-  gfx.restore(min_x, min_y, max_x - min_x, max_y - min_y)
+local function draw_player()
+  gfx.draw_sprite(PLAYER_ID, player_x, player_y,
+                  current_player_frame(), false)
 end
 
 local function mark_player_on_page(page_index)
@@ -598,9 +547,13 @@ local function game_init()
   draw_page_index = 1
   page_has_player[1] = false
   page_has_player[2] = false
+  page_player_x[1] = 0
+  page_player_x[2] = 0
+  page_player_y[1] = 0
+  page_player_y[2] = 0
 
   -- Write static scene data over BOTH hardware blit pages
-  -- explicitly before locking down the snapshot cache. Prevents old garbage data
+  -- before locking down the snapshot cache. This prevents old garbage data
   -- left over in VRAM from flashing for a single frame.
   draw_static_full()
   gfx.present() -- Present first static page and switch draw page
@@ -613,10 +566,28 @@ local function game_init()
 end
 
 local function game_frame()
+  local frame
+  local old_x
+  local old_y
+
   update_player()
 
-  restore_old_player_on_page(draw_page_index)
-  draw_player()
+  frame = current_player_frame()
+
+  if page_has_player[draw_page_index + 1] then
+    old_x = page_player_x[draw_page_index + 1]
+    old_y = page_player_y[draw_page_index + 1]
+
+    gfx.move_sprite(PLAYER_ID,
+                    old_x, old_y,
+                    player_x, player_y,
+                    frame, false)
+  else
+    -- First time this hardware page is used:
+    -- no old sprite exists on this draw page yet.
+    gfx.draw_sprite(PLAYER_ID, player_x, player_y, frame, false)
+  end
+
   mark_player_on_page(draw_page_index)
 
   gfx.present()
