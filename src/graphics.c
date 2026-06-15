@@ -482,6 +482,59 @@ void gfx_draw_sprite(int id, int x, int y, int frame, int flip_x)
 #endif
 }
 
+void gfx_move_sprite(int id,
+                     int old_x, int old_y,
+                     int new_x, int new_y,
+                     int frame,
+                     int flip_x)
+{
+    struct gfx_sprite_slot *s;
+
+    if (!gfx_opened)
+        return;
+
+    if (id < 0 || id >= GFX_MAX_SPRITES)
+        return;
+
+    s = &sprites[id];
+
+    if (!s->used || s->pixels == 0)
+        return;
+
+    if (frame < 0 || frame >= (int)s->frames)
+        frame = 0;
+
+#ifdef USE_NANOX_BACKEND
+    {
+        unsigned int frame_size;
+        const unsigned char *p;
+
+        frame_size = (unsigned int)s->w * (unsigned int)s->h;
+        p = s->pixels + (unsigned int)frame * frame_size;
+
+        /*
+        ** Nano-X path:
+        ** 1. Restore old sprite area from saved-under buffer/window.
+        ** 2. Save the background under the new sprite position.
+        ** 3. Draw the sprite at the new position.
+        */
+        nanox_restore(old_x, old_y, s->w, s->h);
+        nanox_save_under(new_x, new_y, s->w, s->h);
+        nanox_draw_bitmap(p, s->w, s->h, s->transparent,
+                          new_x, new_y, flip_x);
+    }
+#else
+    /*
+    ** Mode X path:
+    ** Restore from background page, then draw to current draw page.
+    */
+    modex_copy_pixels(VGAX_PAGE2, mx_draw_page,
+                      old_x, old_y, s->w, s->h);
+
+    gfx_draw_sprite(id, new_x, new_y, frame, flip_x);
+#endif
+}
+
 int gfx_define_tileset(int id, int tile_w, int tile_h, int count,
                        int transparent, const unsigned char *pixels)
 {

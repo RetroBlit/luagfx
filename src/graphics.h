@@ -60,6 +60,11 @@ int gfx_sleep_ms(unsigned int ms);
 int gfx_define_sprite(int id, int w, int h, int frames,
                       int transparent, const unsigned char *pixels);
 void gfx_draw_sprite(int id, int x, int y, int frame, int flip_x);
+void gfx_move_sprite(int id,
+                     int old_x, int old_y,
+                     int new_x, int new_y,
+                     int frame,
+                     int flip_x);
 
 int gfx_define_tileset(int id, int tile_w, int tile_h, int count,
                        int transparent, const unsigned char *pixels);

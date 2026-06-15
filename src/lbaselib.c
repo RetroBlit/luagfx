@@ -594,6 +594,19 @@ static int luaG_draw_sprite(lua_State *L) {
   return 0;
 }
 
+static int luaG_move_sprite(lua_State *L) {
+  int id = luaL_checkint(L, 1);
+  int old_x = luaL_checkint(L, 2);
+  int old_y = luaL_checkint(L, 3);
+  int new_x = luaL_checkint(L, 4);
+  int new_y = luaL_checkint(L, 5);
+  int frame = luaL_optint(L, 6, 0);
+  int flip_x = lua_toboolean(L, 7);
+
+  gfx_move_sprite(id, old_x, old_y, new_x, new_y, frame, flip_x);
+  return 0;
+}
+
 static int luaG_tileset(lua_State *L) {
   int id = luaL_checkint(L, 1);
   int tile_w = luaL_checkint(L, 2);
@@ -714,6 +727,7 @@ static const luaL_Reg gfx_funcs[] = {
   {"close", luaG_close},
   {"sprite", luaG_sprite},
   {"draw_sprite", luaG_draw_sprite},
+  {"move_sprite", luaG_move_sprite},
   {"tileset", luaG_tileset},
   {"draw_tile", luaG_draw_tile},
   {"tilemap", luaG_tilemap},
