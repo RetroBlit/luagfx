@@ -13,6 +13,10 @@ Left image represents using the VGA mode X backend and the right image the Nano-
 
 The API is the same for all graphics backends, but performance will differ. It is best to choose a primary backend in advance, depending on the type of graphics your game needs and whether Nano-X compatibility is important. Please note that start-up time can be long. Expect between 20s on a fast machine and 2 minutes on a 8086 at 8 Mhz.
 
+## Documentation
+
+Check the (https://github.com/RetroBlit/luagfx/wiki)
+
 ## Build notes
 
 LuaGFX is built with OpenWatcom C for ELKS.
