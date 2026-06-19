@@ -15,7 +15,7 @@ The API is the same for all graphics backends, but performance will differ. It i
 
 ## Documentation
 
-Check the (https://github.com/RetroBlit/luagfx/wiki)
+Check the [wiki](https://github.com/RetroBlit/luagfx/wiki).
 
 ## Build notes
 
