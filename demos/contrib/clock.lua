@@ -1,8 +1,8 @@
 --[[
-Very simple clock with Hour, Minute, and Second hands.
+Very simple clock with Hour, Minute, and Second hands for LuaGFX
 
 What to add:
- * Circle around the clock (whenever something like gfx.circle gets added
+ * Circle around the clock (whenever something like gfx.circle gets added)
  * Ticks around the edge
  * Numbers around the edge
  * White circle as clock background
@@ -10,33 +10,24 @@ What to add:
 
 TODO:
  * When pressing CTRL+C, it stops the program but doesn't restore text mode.
+ 
+Written by vmunix (GitHub username vmunix486) on ELKS 0.9.1, with edits.
 ]]--
 
 local WIDTH = 320
 local HEIGHT = 240
 
-local COLOR = 1
-
-local center_x = WIDTH/2
-local center_y = HEIGHT/2
-
-local hand_length = 80
-
-local clock_running = true
-
-gfx.open(WIDTH, HEIGHT)
-gfx.clear(0)
+local center_x = WIDTH / 2
+local center_y = HEIGHT / 2
 
 local function get_time()
-	local secs = tonumber(os.date("%S"))
-	local mins = tonumber(os.date("%M"))
-	local hrs = tonumber(os.date("%H"))
+	local time = os.date("*t")
 
-	return hrs, mins, secs
+	return time.hour, time.min, time.sec
 end
 
 local function calc_hand_pos(degrees, length)
-	local radians = math.rad(degrees)
+	local radians = math.rad(degrees - 90)
 	local x = center_x + length * math.cos(radians)
 	local y = center_y + length * math.sin(radians)
 
@@ -45,6 +36,7 @@ end
 
 local function draw_hand(degrees, length, color)
 	local x, y = calc_hand_pos(degrees, length)
+
 	gfx.line(
 		center_x,
 		center_y,
@@ -68,7 +60,14 @@ local function draw_clock()
 end
 
 local function main()
-	while clock_running do
+
+	gfx.open(WIDTH, HEIGHT)
+	gfx.clear(0)
+	gfx.present()
+	gfx.clear(0)
+	gfx.present()
+
+	while true do
 		draw_clock()
 		gfx.sleep(1000) -- 1000 ms = 1 second
 		gfx.clear(0)
@@ -76,9 +75,9 @@ local function main()
 end
 
 local ok, err = pcall(main)
+
 gfx.close()
 
 if not ok then
-	gfx.close()
 	print("clock: ", err)
 end
