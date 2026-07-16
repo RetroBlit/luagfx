@@ -24,8 +24,8 @@ LuaGFX is built with OpenWatcom C for ELKS. Youn need two components:
 * for OpenWatcom C on Linux follow [here](https://github.com/ghaerr/elks/wiki/Using-OpenWatcom-C-with-ELKS).
 
 Compile commands:
-* Command for the default ELKS build with VGA mode X backend: `make -f Makefile.elks`
-* Command for Nano-X graphics backend build: `make USE_NANOX_BACKEND=1 NANOX_DIR=/path/to/microwindows/src`
+* the default ELKS build with VGA mode X backend: `make -f Makefile.elks`
+* Nano-X graphics backend build: `make USE_NANOX_BACKEND=1 NANOX_DIR=/path/to/microwindows/src`
 
 ## Acknowledgements
 
