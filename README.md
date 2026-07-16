@@ -21,7 +21,7 @@ Check the [wiki](https://github.com/RetroBlit/luagfx/wiki).
 
 LuaGFX is built with OpenWatcom C for ELKS. Youn need two components:
 * clone [ELKS](https://github.com/ghaerr/elks)
-* for OpenWatcom C on Linux follow [here](https://github.com/ghaerr/elks/wiki/Using-OpenWatcom-C-with-ELKS).
+* for OpenWatcom C on Linux follow [here](https://github.com/ghaerr/elks/wiki/Using-OpenWatcom-C-with-ELKS)
 
 Compile commands:
 * the default ELKS build with VGA mode X backend: `make -f Makefile.elks`
