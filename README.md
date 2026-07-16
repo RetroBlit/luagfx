@@ -20,7 +20,7 @@ Check the [wiki](https://github.com/RetroBlit/luagfx/wiki).
 ## How to build?
 
 LuaGFX (a clone of Lua) is built with OpenWatcom C for ELKS. You need two components:
-* clone [ELKS](https://github.com/ghaerr/elks)
+* clone [ELKS](https://github.com/ghaerr/elks) on Linux or WSL for Windows
 * for OpenWatcom C on Linux follow [here](https://github.com/ghaerr/elks/wiki/Using-OpenWatcom-C-with-ELKS). Once OWC is installed, you need to compile ELKS' libc for large model support `make -f watcom.mk MODEL=l`. This large model libc will be used for the LuaGFX compilation.
 
 Compile commands:
