@@ -24,7 +24,6 @@
 #define GFX_CAP_TILES      0x0020
 #define GFX_CAP_TILEMAP    0x0040
 #define GFX_CAP_WINDOWED   0x0080
-#define GFX_CAP_KEYBOARD   0x0100
 
 #define GFX_PAGE0           0
 #define GFX_PAGE1           1
@@ -78,17 +77,5 @@ void gfx_draw_tilemap(int map_id, int scroll_x, int scroll_y);
 void gfx_set_background(void);
 void gfx_restore(int x, int y, int w, int h);
 void gfx_copy_rect(int src_page, int dst_page, int x, int y, int w, int h);
-
-/*
- * Return one pending key-press event.
- *
- * Returns:
- *   pointer to a key name when a key was pressed;
- *   NULL when no event is available or keyboard input is unsupported.
- *
- * The returned pointer must not be freed.
- * Calling the function consumes one queued event.
- */
-const char *gfx_keypressed(void);
 
 #endif /* GRAPHICS_H */
