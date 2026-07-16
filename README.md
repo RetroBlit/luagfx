@@ -17,12 +17,15 @@ The API is the same for all graphics backends, but performance will differ. It i
 
 Check the [wiki](https://github.com/RetroBlit/luagfx/wiki).
 
-## Build notes
+## How to build?
 
-LuaGFX is built with OpenWatcom C for ELKS.
+LuaGFX is built with OpenWatcom C for ELKS. Youn need two components:
+* clone [ELKS](https://github.com/ghaerr/elks)
+* for OpenWatcom C on Linux follow [here](https://github.com/ghaerr/elks/wiki/Using-OpenWatcom-C-with-ELKS).
 
-- Default ELKS build with VGA mode X backend: `make -f Makefile.elks`
-- Nano-X graphics backend: `make USE_NANOX_BACKEND=1 NANOX_DIR=/path/to/microwindows/src`
+Compile commands:
+* Command for the default ELKS build with VGA mode X backend: `make -f Makefile.elks`
+* Command for Nano-X graphics backend build: `make USE_NANOX_BACKEND=1 NANOX_DIR=/path/to/microwindows/src`
 
 ## Acknowledgements
 
