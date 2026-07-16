@@ -20,6 +20,7 @@
 #include "lauxlib.h"
 #include "lualib.h"
 #include "graphics.h"
+#include "keyboard.h"
 
 /*
 ** If your system does not support `stdout', you can just remove this function.
@@ -471,12 +472,28 @@ static void gfx_refs_init(void) {
   gfx_refs_ready = 1;
 }
 
-static int luaG_open(lua_State *L) {
+static int luaG_open(lua_State *L)
+{
   int w = luaL_optint(L, 1, 320);
   int h = luaL_optint(L, 2, 0);
 
+  /*
+   * Restore any previous keyboard configuration before reopening.
+   */
+  keyboard_close();
+
   if (gfx_open(w, h) != 0)
     return luaL_error(L, "%s", gfx_error());
+
+  if (keyboard_open() != 0) {
+    /*
+     * Defensive cleanup in case keyboard_open() partially initialized
+     * the terminal before failing.
+     */
+    keyboard_close();
+    gfx_close();
+    return luaL_error(L, "%s", keyboard_error());
+  }
 
   lua_pushboolean(L, 1);
   return 1;
@@ -484,11 +501,13 @@ static int luaG_open(lua_State *L) {
 
 static int luaG_close(lua_State *L) {
   (void)L;
+  keyboard_close();
   gfx_close();
   return 0;
 }
 
-static int luaG_present(lua_State *L) {
+static int luaG_present(lua_State *L)
+{
   (void)L;
   gfx_present();
   return 0;
@@ -715,6 +734,20 @@ static int luaG_copy_rect(lua_State *L) {
   return 0;
 }
 
+static int luaG_keypressed(lua_State *L)
+{
+    const char *key;
+
+    key = keyboard_keypressed();
+
+    if (key != NULL)
+        lua_pushstring(L, key);
+    else
+        lua_pushnil(L);
+
+    return 1;
+}
+
 static const luaL_Reg gfx_funcs[] = {
   {"open", luaG_open},
   {"clear", luaG_clear},
@@ -725,6 +758,8 @@ static const luaL_Reg gfx_funcs[] = {
   {"present", luaG_present},
   {"sleep", luaG_sleep},
   {"close", luaG_close},
+  {"keypressed", luaG_keypressed},
+
   {"sprite", luaG_sprite},
   {"draw_sprite", luaG_draw_sprite},
   {"move_sprite", luaG_move_sprite},
