@@ -5,7 +5,8 @@
 #   Lua + gfx API + VGA Mode X backend
 #
 # Nano-X build:
-#   make -f Makefile.elks USE_NANOX_BACKEND=1 NANOX_DIR=/root/microwindows/src
+#   make -f Makefile.elks USE_NANOX_BACKEND=1 \
+#       NANOX_DIR=/root/microwindows/src
 #
 # Optimization selection:
 #   make -f Makefile.elks OPT=size
@@ -73,20 +74,26 @@ endif
 # ------------------------------------------------------------
 # Graphics backend selection
 #
+# Common graphics objects:
+#   graphics.c
+#   keyboard.c
+#
 # Default:
 #   USE_NANOX_BACKEND=0
 #   graphics.c uses VGA Mode X through vgax.c/vgax.h
+#   keyboard.c uses nonblocking console input
 #
 # Nano-X:
 #   USE_NANOX_BACKEND=1
 #   graphics.c uses nanox.c/nanox.h
+#   keyboard.c builds its Nano-X keyboard stub
 #   vgax.c is not linked
 # ------------------------------------------------------------
 
 USE_NANOX_BACKEND ?= 0
 NANOX_DIR ?= /root/toncho11_microwindows/src
 
-GFX_OBJS = graphics.obj
+GFX_OBJS = graphics.obj keyboard.obj
 NANOX_CLIENT_OBJS =
 
 ifeq ($(USE_NANOX_BACKEND),1)
@@ -113,7 +120,8 @@ endif
 
 LOCALFLAGS = -DNDEBUG
 
-CFLAGS = $(OPTFLAGS) $(CLBASE) $(WARNINGS) $(INCLUDES) $(DEFINES) $(LOCALFLAGS)
+CFLAGS = $(OPTFLAGS) $(CLBASE) $(WARNINGS) $(INCLUDES) \
+	$(DEFINES) $(LOCALFLAGS)
 
 LDBASE = -bos2 -s
 LDBASE += -Wl,option -Wl,dosseg
@@ -128,9 +136,10 @@ LDLIBS = -Wl,library -Wl,$(TOPDIR)/libc/libcl.lib
 BINDIR = ../elks-bin
 PROG = lua luac
 
-SRCS = mem.c lmathlib.c lapi.c lcode.c ldebug.c ldo.c ldump.c lfunc.c lgc.c llex.c lmem.c \
-	lobject.c lopcodes.c lparser.c lstate.c lstring.c ltable.c ltm.c \
-	lundump.c lvm.c lzio.c lauxlib.c lbaselib.c ldblib.c liolib.c loslib.c ltablib.c \
+SRCS = mem.c lmathlib.c lapi.c lcode.c ldebug.c ldo.c ldump.c \
+	lfunc.c lgc.c llex.c lmem.c lobject.c lopcodes.c lparser.c \
+	lstate.c lstring.c ltable.c ltm.c lundump.c lvm.c lzio.c \
+	lauxlib.c lbaselib.c ldblib.c liolib.c loslib.c ltablib.c \
 	lstrlib.c loadlib.c linit.c
 
 OBJS = $(SRCS:.c=.obj) $(GFX_OBJS) $(NANOX_CLIENT_OBJS)
@@ -157,10 +166,26 @@ luac.obj: luac.c
 print.obj: print.c
 	$(CC) -c $(CFLAGS) -o print.obj $<
 
-# Local graphics files
+# ------------------------------------------------------------
+# Lua base library
+#
+# lbaselib.c directly includes graphics.h and keyboard.h, so make
+# their dependencies explicit. This ensures that changes to either
+# header cause lbaselib.obj to be rebuilt.
+# ------------------------------------------------------------
+
+lbaselib.obj: lbaselib.c graphics.h keyboard.h
+	$(CC) -c $(CFLAGS) -o lbaselib.obj lbaselib.c
+
+# ------------------------------------------------------------
+# Local graphics and keyboard files
+# ------------------------------------------------------------
 
 graphics.obj: graphics.c graphics.h
 	$(CC) -c $(CFLAGS) -o graphics.obj graphics.c
+
+keyboard.obj: keyboard.c keyboard.h
+	$(CC) -c $(CFLAGS) -o keyboard.obj keyboard.c
 
 vgax.obj: vgax.c vgax.h
 	$(CC) -c $(CFLAGS) -o vgax.obj vgax.c
@@ -168,7 +193,9 @@ vgax.obj: vgax.c vgax.h
 nanox.obj: nanox.c nanox.h graphics.h
 	$(CC) -c $(CFLAGS) -o nanox.obj nanox.c
 
+# ------------------------------------------------------------
 # Nano-X client objects
+# ------------------------------------------------------------
 
 nx_client.obj: $(NANOX_DIR)/nanox/client.c
 	$(CC) -c $(CFLAGS) -o $@ $<
