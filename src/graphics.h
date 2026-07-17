@@ -24,6 +24,7 @@
 #define GFX_CAP_TILES      0x0020
 #define GFX_CAP_TILEMAP    0x0040
 #define GFX_CAP_WINDOWED   0x0080
+#define GFX_CAP_KEYBOARD   0x0100
 
 #define GFX_PAGE0           0
 #define GFX_PAGE1           1
@@ -77,5 +78,22 @@ void gfx_draw_tilemap(int map_id, int scroll_x, int scroll_y);
 void gfx_set_background(void);
 void gfx_restore(int x, int y, int w, int h);
 void gfx_copy_rect(int src_page, int dst_page, int x, int y, int w, int h);
+
+/*
+ * Text and font support.
+ *
+ * Text is drawn with a transparent background using the selected
+ * bitmap font and the supplied palette color.
+ */
+int gfx_set_font(int font_id);
+int gfx_get_font(void);
+
+void gfx_print(const char *text,
+               int x,
+               int y,
+               int color);
+
+int gfx_text_width(const char *text);
+int gfx_text_height(void);
 
 #endif /* GRAPHICS_H */

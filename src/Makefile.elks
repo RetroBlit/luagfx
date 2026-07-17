@@ -74,26 +74,34 @@ endif
 # ------------------------------------------------------------
 # Graphics backend selection
 #
-# Common graphics objects:
+# Common graphics and input objects:
 #   graphics.c
 #   keyboard.c
+#
+# Common font and text objects:
+#   font.c
+#   font_builtin_8x8.c
+#   rendtext.c
 #
 # Default:
 #   USE_NANOX_BACKEND=0
 #   graphics.c uses VGA Mode X through vgax.c/vgax.h
 #   keyboard.c uses nonblocking console input
+#   text is rendered through the Mode X horizontal-line backend
 #
 # Nano-X:
 #   USE_NANOX_BACKEND=1
 #   graphics.c uses nanox.c/nanox.h
 #   keyboard.c builds its Nano-X keyboard stub
+#   text is rendered through the Nano-X horizontal-line backend
 #   vgax.c is not linked
 # ------------------------------------------------------------
 
 USE_NANOX_BACKEND ?= 0
 NANOX_DIR ?= /root/toncho11_microwindows/src
 
-GFX_OBJS = graphics.obj keyboard.obj
+GFX_OBJS = graphics.obj keyboard.obj \
+	font.obj font_builtin_8x8.obj rendtext.obj
 NANOX_CLIENT_OBJS =
 
 ifeq ($(USE_NANOX_BACKEND),1)
@@ -169,23 +177,36 @@ print.obj: print.c
 # ------------------------------------------------------------
 # Lua base library
 #
-# lbaselib.c directly includes graphics.h and keyboard.h, so make
-# their dependencies explicit. This ensures that changes to either
-# header cause lbaselib.obj to be rebuilt.
+# lbaselib.c directly includes graphics.h, keyboard.h and font.h.
+# Keep these dependencies explicit so changes to the graphics,
+# keyboard or public font constants rebuild lbaselib.obj.
 # ------------------------------------------------------------
 
-lbaselib.obj: lbaselib.c graphics.h keyboard.h
+lbaselib.obj: lbaselib.c graphics.h keyboard.h font.h
 	$(CC) -c $(CFLAGS) -o lbaselib.obj lbaselib.c
 
 # ------------------------------------------------------------
-# Local graphics and keyboard files
+# Common graphics, keyboard, font and text files
 # ------------------------------------------------------------
 
-graphics.obj: graphics.c graphics.h
+graphics.obj: graphics.c graphics.h font.h rendtext.h
 	$(CC) -c $(CFLAGS) -o graphics.obj graphics.c
 
 keyboard.obj: keyboard.c keyboard.h
 	$(CC) -c $(CFLAGS) -o keyboard.obj keyboard.c
+
+font.obj: font.c font.h
+	$(CC) -c $(CFLAGS) -o font.obj font.c
+
+font_builtin_8x8.obj: font_builtin_8x8.c font.h
+	$(CC) -c $(CFLAGS) -o font_builtin_8x8.obj font_builtin_8x8.c
+
+rendtext.obj: rendtext.c rendtext.h font.h
+	$(CC) -c $(CFLAGS) -o rendtext.obj rendtext.c
+
+# ------------------------------------------------------------
+# Graphics backend files
+# ------------------------------------------------------------
 
 vgax.obj: vgax.c vgax.h
 	$(CC) -c $(CFLAGS) -o vgax.obj vgax.c

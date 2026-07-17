@@ -21,6 +21,7 @@
 #include "lualib.h"
 #include "graphics.h"
 #include "keyboard.h"
+#include "font.h"
 
 /*
 ** If your system does not support `stdout', you can just remove this function.
@@ -748,6 +749,58 @@ static int luaG_keypressed(lua_State *L)
     return 1;
 }
 
+static int luaG_set_font(lua_State *L)
+{
+    int id;
+
+    id = luaL_checkint(L, 1);
+
+    if (gfx_set_font(id) != 0)
+        return luaL_error(L, "invalid or unregistered font id");
+
+    return 0;
+}
+
+static int luaG_get_font(lua_State *L)
+{
+    lua_pushinteger(L, gfx_get_font());
+    return 1;
+}
+
+static int luaG_print(lua_State *L)
+{
+    const char *text;
+    int x;
+    int y;
+    int color;
+
+    text = luaL_checkstring(L, 1);
+    x = luaL_checkint(L, 2);
+    y = luaL_checkint(L, 3);
+    color = luaL_checkint(L, 4);
+
+    gfx_print(text, x, y, color);
+    return 0;
+}
+
+static int luaG_text_width(lua_State *L)
+{
+    const char *text;
+
+    text = luaL_checkstring(L, 1);
+
+    lua_pushinteger(L, gfx_text_width(text));
+    return 1;
+}
+
+static int luaG_text_height(lua_State *L)
+{
+    (void)L;
+
+    lua_pushinteger(L, gfx_text_height());
+    return 1;
+}
+
 static const luaL_Reg gfx_funcs[] = {
   {"open", luaG_open},
   {"clear", luaG_clear},
@@ -759,7 +812,11 @@ static const luaL_Reg gfx_funcs[] = {
   {"sleep", luaG_sleep},
   {"close", luaG_close},
   {"keypressed", luaG_keypressed},
-
+  {"set_font", luaG_set_font},
+  {"get_font", luaG_get_font},
+  {"print", luaG_print},
+  {"text_width", luaG_text_width},
+  {"text_height", luaG_text_height},
   {"sprite", luaG_sprite},
   {"draw_sprite", luaG_draw_sprite},
   {"move_sprite", luaG_move_sprite},
@@ -790,6 +847,8 @@ static void luaopen_gfx_table(lua_State *L) {
   lua_setfield(L, -2, "PAGE_BACKGROUND");
   lua_pushinteger(L, GFX_NO_TRANSPARENT);
   lua_setfield(L, -2, "NO_TRANSPARENT");
+  lua_pushinteger(L, GFX_FONT_BUILTIN_8X8);
+  lua_setfield(L, -2, "FONT_8X8");
 
   lua_pop(L, 1);
 }

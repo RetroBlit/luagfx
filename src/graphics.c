@@ -1,4 +1,6 @@
 #include "graphics.h"
+#include "font.h"
+#include "rendtext.h"
 
 #include <string.h>
 #include <unistd.h>
@@ -114,6 +116,129 @@ static void backend_hline(int x, int y, int w, unsigned char c)
 #endif
 }
 
+/*
+ * Return nonzero when one pixel in a monochrome glyph is set.
+ *
+ * Future font formats can add separate helpers for 8-bit coverage,
+ * antialiasing, or compressed glyph data.
+ */
+static int
+text_glyph_bit(const GfxGlyph *glyph,
+               unsigned int row,
+               unsigned int column)
+{
+    const unsigned char *row_bits;
+    unsigned char value;
+    unsigned char mask;
+
+    row_bits = glyph->bits + row * glyph->stride;
+    value = row_bits[column >> 3];
+
+    if ((glyph->flags & GFX_FONT_FLAG_LSB_LEFT) != 0)
+        mask = (unsigned char)(1U << (column & 7U));
+    else
+        mask = (unsigned char)(0x80U >> (column & 7U));
+
+    return (value & mask) != 0;
+}
+
+/*
+ * Render one monochrome glyph as horizontal runs.
+ *
+ * Using backend_hline() is more efficient for Mode X than calling
+ * vgax_plot() for every individual text pixel. It also allows this
+ * implementation to work through the existing Nano-X backend.
+ *
+ * Future optimizations can replace this callback with:
+ *
+ *   - cached glyph runs;
+ *   - four precompiled Mode X alignment phases;
+ *   - native Nano-X bitmap/text requests;
+ *   - scaled or antialiased glyph rendering;
+ */
+static void backend_draw_text_glyph(const GfxGlyph *glyph,
+									int x,
+									int y,
+									unsigned char color,
+									const GfxTextClip *clip)
+{
+    unsigned int row;
+    unsigned int column;
+    int py;
+
+    if (!gfx_opened || glyph == 0 || glyph->bits == 0)
+        return;
+
+    /*
+     * Version 1 supports one-bit monochrome glyphs only.
+     */
+    if (glyph->bits_per_pixel != GFX_FONT_BPP_MONO)
+        return;
+
+    for (row = 0; row < glyph->height; ++row) {
+        py = y + (int)row;
+
+        if (py < 0 || py >= gfx_h)
+            continue;
+
+        if (clip != 0) {
+            if (py < clip->y ||
+                py >= clip->y + clip->height)
+                continue;
+        }
+
+        column = 0;
+
+        while (column < glyph->width) {
+            unsigned int run_start;
+            int run_x;
+            int run_width;
+
+            /*
+             * Skip transparent pixels.
+             */
+            while (column < glyph->width &&
+                   !text_glyph_bit(glyph, row, column))
+                ++column;
+
+            if (column >= glyph->width)
+                break;
+
+            run_start = column;
+
+            /*
+             * Find one continuous foreground run.
+             */
+            while (column < glyph->width &&
+                   text_glyph_bit(glyph, row, column))
+                ++column;
+
+            run_x = x + (int)run_start;
+            run_width = (int)(column - run_start);
+
+            /*
+             * Apply the renderer-specific clipping rectangle.
+             * backend_hline() also clips against gfx_w and gfx_h.
+             */
+            if (clip != 0) {
+                if (run_x < clip->x) {
+                    run_width -= clip->x - run_x;
+                    run_x = clip->x;
+                }
+
+                if (run_x + run_width >
+                    clip->x + clip->width) {
+                    run_width =
+                        clip->x + clip->width - run_x;
+                }
+            }
+
+            if (run_width > 0)
+                backend_hline(run_x, py, run_width, color);
+        }
+    }
+}
+
 int gfx_open(int w, int h)
 {
     if (gfx_opened)
@@ -169,19 +294,56 @@ int gfx_open(int w, int h)
                    GFX_CAP_TILEMAP;
 #endif
 
-    memset(sprites, 0, sizeof(sprites));
-    memset(tilesets, 0, sizeof(tilesets));
-    memset(tilemaps, 0, sizeof(tilemaps));
+	memset(sprites, 0, sizeof(sprites));
+	memset(tilesets, 0, sizeof(tilesets));
+	memset(tilemaps, 0, sizeof(tilemaps));
 
-    gfx_opened = 1;
-    gfx_err = "no error";
-    return 0;
+	gfx_opened = 1;
+
+	/*
+	 * Initialize backend-independent font and text handling.
+	 *
+	 * rendtext_set_backend() connects the generic string-layout module
+	 * to this graphics backend.
+	 */
+	font_init();
+	rendtext_init();
+	rendtext_set_backend(backend_draw_text_glyph);
+
+	if (rendtext_set_font(GFX_FONT_BUILTIN_8X8) != 0) {
+		rendtext_set_backend(0);
+
+#ifdef USE_NANOX_BACKEND
+		nanox_close();
+#else
+		vgax_text_mode();
+#endif
+
+		gfx_opened = 0;
+		gfx_backend = GFX_BACKEND_NONE;
+		gfx_w = 0;
+		gfx_h = 0;
+		gfx_cap_bits = 0;
+		gfx_err = "cannot select built-in font";
+
+		return -1;
+	}
+
+	gfx_err = "no error";
+	return 0;
 }
 
 void gfx_close(void)
 {
     if (!gfx_opened)
         return;
+
+    /*
+     * Disconnect the active backend callback before closing graphics.
+     * Font descriptors remain registered and can be reused after another
+     * gfx.open().
+     */
+    rendtext_set_backend(0);
 
 #ifdef USE_NANOX_BACKEND
     nanox_close();
@@ -761,4 +923,55 @@ void gfx_copy_rect(int src_page, int dst_page, int x, int y, int w, int h)
         modex_copy_pixels(src, dst, x, y, w, h);
     }
 #endif
+}
+
+int gfx_set_font(int font_id)
+{
+    return rendtext_set_font(font_id);
+}
+
+int gfx_get_font(void)
+{
+    return rendtext_get_font();
+}
+
+void gfx_print(const char *text,
+			   int x,
+               int y,
+               int color)
+{
+    GfxTextClip clip;
+
+    if (!gfx_opened || text == 0)
+        return;
+
+    /*
+     * Version 1 clips text to the complete logical LuaGFX display.
+     *
+     * Future extension: a user-selectable graphics clipping rectangle.
+     */
+    clip.x = 0;
+    clip.y = 0;
+    clip.width = gfx_w;
+    clip.height = gfx_h;
+
+    rendtext_draw(text,
+                  x,
+                  y,
+                  (unsigned char)color,
+                  &clip);
+}
+
+int gfx_text_width(const char *text)
+{
+    if (text == 0)
+        return 0;
+
+    return rendtext_width(text);
+}
+
+
+int gfx_text_height(void)
+{
+    return rendtext_height();
 }
