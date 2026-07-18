@@ -1,10 +1,10 @@
 -- move_rect.lua
 --
 -- Move a filled rectangle sprite:
---   I = up
---   J = left
---   K = down
---   M = right
+--   Arrow Up    = move up
+--   Arrow Left  = move left
+--   Arrow Down  = move down
+--   Arrow Right = move right
 --   Escape or Q = quit
 
 local SCREEN_W = 320
@@ -48,16 +48,16 @@ while running do
             break
         end
 
-        if key == "i" then
+        if key == "up" then
             y = y - MOVE_STEP
 
-        elseif key == "j" then
+        elseif key == "left" then
             x = x - MOVE_STEP
 
-        elseif key == "k" then
+        elseif key == "down" then
             y = y + MOVE_STEP
 
-        elseif key == "m" then
+        elseif key == "right" then
             x = x + MOVE_STEP
 
         elseif key == "escape" or key == "q" then
