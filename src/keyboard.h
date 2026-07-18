@@ -5,7 +5,8 @@
 **   Uses the console through noncanonical, nonblocking stdin.
 **
 ** Nano-X backend:
-**   Stub implementation. keyboard_keypressed() always returns NULL.
+**   Retrieves buffered key events from nanox.c.
+**   nanox.c remains the only consumer of the Nano-X event stream.
 */
 
 #ifndef keyboard_h
@@ -18,13 +19,17 @@
  *   0  success
  *  -1  initialization failed
  *
- * The Nano-X stub returns 0 so that gfx.open() can still succeed.
+ * For Nano-X, this enables keyboard event retrieval from the event
+ * queue maintained by nanox.c.
  */
 int keyboard_open(void);
 
 /*
- * Restore the terminal state and discard queued input.
- * Safe to call when the keyboard is not open.
+ * Restore keyboard state and discard backend-specific input state.
+ * Safe to call when keyboard handling is not open.
+ *
+ * The Mode X backend restores the console terminal settings.
+ * The Nano-X backend disables keyboard event retrieval.
  */
 void keyboard_close(void);
 
@@ -35,13 +40,17 @@ void keyboard_close(void);
  *   "a", "0", "space", "return", "escape",
  *   "left", "right", "up", "down"
  *
- * Returns NULL when no complete key event is available.
+ * For Nano-X, key events buffered by nanox.c are translated here.
+ * A Nano-X window close request is reported once as "escape".
+ *
+ * Returns NULL when no supported key event is available.
  * The returned pointer refers to static storage and must not be freed.
  */
 const char *keyboard_keypressed(void);
 
 /*
- * Return the most recent initialization error, or an empty string.
+ * Return the most recent keyboard initialization error,
+ * or an empty string when no error is available.
  */
 const char *keyboard_error(void);
 

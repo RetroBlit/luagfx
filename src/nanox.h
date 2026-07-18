@@ -1,6 +1,8 @@
 #ifndef NANOX_BACKEND_H
 #define NANOX_BACKEND_H
 
+#include "nano-X.h"
+
 int nanox_open(int w, int h);
 void nanox_close(void);
 
@@ -11,6 +13,17 @@ int nanox_height(void);
 
 void nanox_present(void);
 int nanox_sleep_ms(unsigned int ms);
+
+/*
+ * Return one buffered Nano-X key-down event.
+ *
+ * Window close requests are returned once as MWKEY_ESCAPE.
+ *
+ * Returns:
+ *   1  a key was returned through key
+ *   0  no key or close request is pending
+ */
+int nanox_get_key(GR_KEY *key);
 
 void nanox_clear(int color);
 void nanox_pixel(int x, int y, int color);
@@ -32,7 +45,7 @@ void nanox_set_background(void);
 void nanox_restore(int x, int y, int w, int h);
 void nanox_copy_rect(int src_page, int dst_page,
                      int x, int y, int w, int h);
-int  nanox_save_under(int x, int y, int w, int h);
+int nanox_save_under(int x, int y, int w, int h);
 void nanox_restore_saved(void);
 
 #endif

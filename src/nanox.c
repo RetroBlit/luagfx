@@ -4,6 +4,7 @@
 #include "nano-X.h"
 
 #include <string.h>
+#include <sys/time.h>
 
 #ifndef MWRGB
 #define MWRGB(r,g,b) ((((unsigned long)(r)) << 16) | \
@@ -41,7 +42,24 @@ static GR_WINDOW_ID nx_bg = 0;
 static int nx_w = 0;
 static int nx_h = 0;
 static int nx_opened = 0;
-static int nx_quit_requested = 0;
+
+#define NANOX_KEY_QUEUE_SIZE 16
+
+static GR_KEY nx_key_queue[NANOX_KEY_QUEUE_SIZE];
+static unsigned char nx_key_queue_start;
+static unsigned char nx_key_queue_count;
+
+/*
+ * Close requests are stored separately so they cannot be lost when
+ * the keyboard queue is full.
+ */
+static unsigned char nx_close_pending;
+
+/*
+ * Nonzero when drawing or copy commands have been issued since the
+ * previous GrFlush().
+ */
+static unsigned char nx_commands_pending;
 
 static const char *nx_err = "no error";
 
@@ -137,33 +155,126 @@ static int clip_rect(int *x, int *y, int *w, int *h)
     return (*w > 0 && *h > 0);
 }
 
-static void nanox_redraw_from_background(void)
+static unsigned long nanox_current_ms(void)
+{
+    struct timeval tv;
+
+    gettimeofday(&tv, 0);
+
+    return ((unsigned long)tv.tv_sec * 1000UL) +
+           ((unsigned long)tv.tv_usec / 1000UL);
+}
+
+static void nanox_reset_input_queue(void)
+{
+    nx_key_queue_start = 0;
+    nx_key_queue_count = 0;
+    nx_close_pending = 0;
+}
+
+static void nanox_queue_key(GR_KEY key)
+{
+    unsigned int tail;
+
+    /*
+     * When full, discard the oldest event. For interactive movement,
+     * preserving newer input is more useful than preserving stale input.
+     */
+    if (nx_key_queue_count >= NANOX_KEY_QUEUE_SIZE) {
+        nx_key_queue_start =
+            (unsigned char)(((unsigned int)nx_key_queue_start + 1U) %
+                            NANOX_KEY_QUEUE_SIZE);
+
+        nx_key_queue_count--;
+    }
+
+    tail = ((unsigned int)nx_key_queue_start +
+            (unsigned int)nx_key_queue_count) %
+           NANOX_KEY_QUEUE_SIZE;
+
+    nx_key_queue[tail] = key;
+    nx_key_queue_count++;
+}
+
+
+static int nanox_pop_key(GR_KEY *key)
+{
+    if (key == 0 || nx_key_queue_count == 0)
+        return 0;
+
+    *key = nx_key_queue[nx_key_queue_start];
+
+    nx_key_queue_start =
+        (unsigned char)(((unsigned int)nx_key_queue_start + 1U) %
+                        NANOX_KEY_QUEUE_SIZE);
+
+    nx_key_queue_count--;
+
+    if (nx_key_queue_count == 0)
+        nx_key_queue_start = 0;
+
+    return 1;
+}
+
+static void nanox_mark_commands_pending(void)
+{
+    nx_commands_pending = 1;
+}
+
+static void nanox_flush_pending(void)
+{
+    if (!nx_opened || !nx_commands_pending)
+        return;
+
+    GrFlush();
+    nx_commands_pending = 0;
+}
+
+static int nanox_redraw_from_background(void)
 {
     if (!nx_opened || !nx_win || !nx_gc || !nx_bg)
-        return;
+        return 0;
 
     GrCopyArea(nx_win, nx_gc,
                0, 0, nx_w, nx_h,
                nx_bg,
                0, 0,
                MWROP_COPY);
+
+    nanox_mark_commands_pending();
+    return 1;
 }
 
 static void nanox_handle_event(GR_EVENT *ev)
 {
+    if (ev == 0)
+        return;
+
     switch (ev->type) {
     case GR_EVENT_TYPE_EXPOSURE:
-        nanox_redraw_from_background();
-        GrFlush();
+        /*
+         * Restore immediately only when a complete cached background
+         * exists. In the usual low-memory configuration nx_bg is zero,
+         * so the next Lua frame repaints the window.
+         */
+        if (nanox_redraw_from_background())
+            nanox_flush_pending();
         break;
 
     case GR_EVENT_TYPE_CLOSE_REQ:
-        nx_quit_requested = 1;
+        /*
+         * Preserve the close request until gfx.keypressed() reads it.
+         * nanox_get_key() will expose it as MWKEY_ESCAPE.
+         */
+        nx_close_pending = 1;
         break;
 
     case GR_EVENT_TYPE_KEY_DOWN:
-        if (ev->keystroke.ch == 27 || ev->keystroke.ch == 'q')
-            nx_quit_requested = 1;
+        /*
+         * Lua decides what Escape, Q and every other key mean.
+         * Do not convert them into an error here.
+         */
+        nanox_queue_key(ev->keystroke.ch);
         break;
 
     default:
@@ -171,35 +282,95 @@ static void nanox_handle_event(GR_EVENT *ev)
     }
 }
 
-static int nanox_process_events(unsigned int timeout_ms)
+static void nanox_drain_events(void)
 {
     GR_EVENT ev;
 
     if (!nx_opened)
-        return 0;
+        return;
 
-    memset(&ev, 0, sizeof(ev));
-    GrGetNextEventTimeout(&ev, timeout_ms);
+    for (;;) {
+        memset(&ev, 0, sizeof(ev));
 
-    if (ev.type != 0)
+        GrGetNextEventTimeout(&ev, GR_TIMEOUT_POLL);
+
+        if (ev.type == GR_EVENT_TYPE_NONE ||
+            ev.type == GR_EVENT_TYPE_TIMEOUT) {
+            break;
+        }
+
         nanox_handle_event(&ev);
+    }
+}
 
-    if (nx_quit_requested) {
-        nx_err = "Interrupted";
-        return -1;
+static void nanox_process_events(unsigned int timeout_ms)
+{
+    GR_EVENT ev;
+    unsigned long start_ms;
+    unsigned long now_ms;
+    unsigned long elapsed_ms;
+    unsigned long remaining_ms;
+
+    if (!nx_opened)
+        return;
+
+    /*
+     * Zero means poll and buffer everything currently available without
+     * waiting.
+     */
+    if (timeout_ms == 0) {
+        nanox_drain_events();
+        return;
     }
 
-    return 0;
+    start_ms = nanox_current_ms();
+    remaining_ms = (unsigned long)timeout_ms;
+
+    for (;;) {
+        memset(&ev, 0, sizeof(ev));
+
+        GrGetNextEventTimeout(&ev, remaining_ms);
+
+        /*
+         * A timeout means the remaining delay has completed.
+         * Drain events that may have arrived at the timeout boundary.
+         */
+        if (ev.type == GR_EVENT_TYPE_NONE ||
+            ev.type == GR_EVENT_TYPE_TIMEOUT) {
+            nanox_drain_events();
+            return;
+        }
+
+        nanox_handle_event(&ev);
+
+        /*
+         * Buffer every other event that arrived with the first one.
+         */
+        nanox_drain_events();
+
+        now_ms = nanox_current_ms();
+        elapsed_ms = now_ms - start_ms;
+
+        if (elapsed_ms >= (unsigned long)timeout_ms)
+            return;
+
+        remaining_ms =
+            (unsigned long)timeout_ms - elapsed_ms;
+    }
 }
 
 int nanox_open(int w, int h)
 {
     if (w <= 0)
         w = 320;
+
     if (h <= 0)
         h = 200;
 
     soft_palette_defaults();
+
+    nanox_reset_input_queue();
+    nx_commands_pending = 0;
 
     if (GrOpen() < 0) {
         nx_err = "cannot open Nano-X";
@@ -212,27 +383,30 @@ int nanox_open(int w, int h)
                          0,
                          nx_color(0),
                          nx_color(0));
+
     if (!nx_win) {
         GrClose();
+
         nx_err = "cannot create Nano-X window";
         return -1;
     }
 
     nx_gc = GrNewGC();
+
     if (!nx_gc) {
         GrDestroyWindow(nx_win);
         GrClose();
+
         nx_win = 0;
         nx_err = "cannot create Nano-X GC";
         return -1;
     }
 
     /*
-	 * It is better not to allocate a full-screen background pixmap.
-	 * It is too expensive and may fail. We use a small save-under
-	 * pixmap per sprite instead.
-	 */
-	nx_bg = 0;
+     * Avoid a full-screen background pixmap on ELKS. Moving sprites use
+     * the smaller reusable save-under pixmap instead.
+     */
+    nx_bg = 0;
 
     GrSelectEvents(nx_win,
                    GR_EVENT_MASK_EXPOSURE |
@@ -240,14 +414,22 @@ int nanox_open(int w, int h)
                    GR_EVENT_MASK_CLOSE_REQ);
 
     GrMapWindow(nx_win);
+
+    /*
+     * Window mapping must be sent immediately.
+     */
     GrFlush();
 
     nx_w = w;
     nx_h = h;
     nx_opened = 1;
-    nx_quit_requested = 0;
-	nx_fg_valid = 0;
-	nx_fg_color = 0;
+
+    nx_fg_valid = 0;
+    nx_fg_color = 0;
+
+    nx_commands_pending = 0;
+    nanox_reset_input_queue();
+
     nx_err = "no error";
 
     return 0;
@@ -255,6 +437,12 @@ int nanox_open(int w, int h)
 
 void nanox_close(void)
 {
+    /*
+     * Send any final pending drawing commands before resources are
+     * destroyed.
+     */
+    nanox_flush_pending();
+
     if (nx_save_pix) {
         GrDestroyWindow(nx_save_pix);
         nx_save_pix = 0;
@@ -279,12 +467,18 @@ void nanox_close(void)
     nx_win = 0;
     nx_gc = 0;
     nx_bg = 0;
+
     nx_w = 0;
     nx_h = 0;
     nx_opened = 0;
-    nx_quit_requested = 0;
-	nx_fg_valid = 0;
-	nx_fg_color = 0;
+
+    nx_fg_valid = 0;
+    nx_fg_color = 0;
+
+    nx_commands_pending = 0;
+    nanox_reset_input_queue();
+
+    nx_err = "no error";
 }
 
 const char *nanox_error(void)
@@ -307,22 +501,56 @@ void nanox_present(void)
     if (!nx_opened)
         return;
 
-    GrFlush();
+    /*
+     * Nano-X is single-buffered. Present sends only commands accumulated
+     * since the previous flush. It does not sleep or consume events.
+     */
+    nanox_flush_pending();
+}
+
+int nanox_get_key(GR_KEY *key)
+{
+    if (!nx_opened || key == 0)
+        return 0;
 
     /*
-     * TODO: investigate what timeout value is good.
-     * Nano-X can block until an event.
-     * Timeout 1 lets the game continue even without mouse movement.
+     * Avoid a Nano-X poll when sleep() has already buffered input.
      */
-    nanox_process_events(1);
+    if (!nx_close_pending && nx_key_queue_count == 0)
+        nanox_process_events(0);
+
+    /*
+     * A window close request has priority and is returned once as Escape.
+     */
+    if (nx_close_pending) {
+        nx_close_pending = 0;
+        *key = MWKEY_ESCAPE;
+        return 1;
+    }
+
+    return nanox_pop_key(key);
 }
 
 int nanox_sleep_ms(unsigned int ms)
 {
-    if (ms == 0)
-        ms = 1;
+    if (!nx_opened)
+        return 0;
 
-    return nanox_process_events(ms);
+    /*
+     * This is normally already done by gfx.present(). It also supports
+     * Lua code that draws and then calls gfx.sleep() without present().
+     */
+    nanox_flush_pending();
+
+    /*
+     * Wait for the complete requested duration while buffering keyboard,
+     * exposure and close events.
+     *
+     * A zero delay performs only a nonblocking event drain.
+     */
+    nanox_process_events(ms);
+
+    return 0;
 }
 
 void nanox_clear(int color)
@@ -335,6 +563,7 @@ void nanox_clear(int color)
     c = (unsigned char)color;
     nanox_set_fg(c);
     GrFillRect(nx_win, nx_gc, 0, 0, nx_w, nx_h);
+    nanox_mark_commands_pending();
 }
 
 void nanox_pixel(int x, int y, int color)
@@ -350,6 +579,7 @@ void nanox_pixel(int x, int y, int color)
     c = (unsigned char)color;
     nanox_set_fg(c);
     GrPoint(nx_win, nx_gc, x, y);
+    nanox_mark_commands_pending();
 }
 
 void nanox_line(int x0, int y0, int x1, int y1, int color)
@@ -362,6 +592,7 @@ void nanox_line(int x0, int y0, int x1, int y1, int color)
     c = (unsigned char)color;
     nanox_set_fg(c);
     GrLine(nx_win, nx_gc, x0, y0, x1, y1);
+    nanox_mark_commands_pending();
 }
 
 void nanox_hline(int x, int y, int w, unsigned char c)
@@ -385,6 +616,7 @@ void nanox_hline(int x, int y, int w, unsigned char c)
 
     nanox_set_fg(c);
     GrLine(nx_win, nx_gc, x, y, x + w - 1, y);
+    nanox_mark_commands_pending();
 }
 
 static void nanox_vline(int x, int y, int h, unsigned char c)
@@ -408,6 +640,7 @@ static void nanox_vline(int x, int y, int h, unsigned char c)
 
     nanox_set_fg(c);
     GrLine(nx_win, nx_gc, x, y, x, y + h - 1);
+    nanox_mark_commands_pending();
 }
 
 void nanox_rect(int x, int y, int w, int h, int color)
@@ -438,6 +671,7 @@ void nanox_fill(int x, int y, int w, int h, int color)
     c = (unsigned char)color;
     nanox_set_fg(c);
     GrFillRect(nx_win, nx_gc, x, y, w, h);
+    nanox_mark_commands_pending();
 }
 
 void nanox_draw_bitmap(const unsigned char *pixels,
@@ -516,6 +750,8 @@ void nanox_set_background(void)
                nx_win,
                0, 0,
                MWROP_COPY);
+
+    nanox_mark_commands_pending();
 }
 
 void nanox_restore(int x, int y, int w, int h)
@@ -540,6 +776,8 @@ void nanox_restore(int x, int y, int w, int h)
                nx_bg,
                x, y,
                MWROP_COPY);
+
+    nanox_mark_commands_pending();
 }
 
 void nanox_copy_rect(int src_page, int dst_page,
@@ -608,6 +846,8 @@ int nanox_save_under(int x, int y, int w, int h)
                x, y,
                MWROP_COPY);
 
+    nanox_mark_commands_pending();
+
     nx_save_x = x;
     nx_save_y = y;
     nx_save_w = w;
@@ -633,6 +873,8 @@ void nanox_restore_saved(void)
                nx_save_pix,
                0, 0,
                MWROP_COPY);
+
+    nanox_mark_commands_pending();
 
     nx_save_valid = 0;
 }

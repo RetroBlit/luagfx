@@ -6,33 +6,144 @@
 
 #ifdef USE_NANOX_BACKEND
 
+#include "nanox.h"
+
+static int nanox_keyboard_ready;
+static char nanox_character_name[2];
+
 /*
- * Nano-X keyboard support is intentionally left as a stub.
- * A future implementation can translate Nano-X key events to the
- * same LÖVE-style names returned by the Mode X implementation.
+
+Translate one Nano-X key code to the name returned
+
+by gfx.keypressed().
+*/
+static const char *nanox_translate_key(GR_KEY key)
+{
+switch (key) {
+case MWKEY_ESCAPE:
+return "escape";
+
+case MWKEY_ENTER:
+return "return";
+
+#ifdef MWKEY_KP_ENTER
+case MWKEY_KP_ENTER:
+return "return";
+#endif
+
+case MWKEY_TAB:
+    return "tab";
+
+case MWKEY_BACKSPACE:
+    return "backspace";
+
+case MWKEY_LEFT:
+    return "left";
+
+case MWKEY_RIGHT:
+    return "right";
+
+case MWKEY_UP:
+    return "up";
+
+case MWKEY_DOWN:
+    return "down";
+
+case MWKEY_HOME:
+    return "home";
+
+case MWKEY_END:
+    return "end";
+
+case MWKEY_INSERT:
+    return "insert";
+
+case MWKEY_DELETE:
+    return "delete";
+
+case MWKEY_PAGEUP:
+    return "pageup";
+
+case MWKEY_PAGEDOWN:
+    return "pagedown";
+
+case ' ':
+    return "space";
+
+default:
+    break;
+}
+
+/*
+ * Printable ASCII characters.
+ *
+ * Convert upper-case letters to lower-case so the returned names
+ * match the Mode X implementation.
  */
+if (key >= 32 && key <= 126) {
+    unsigned char value;
 
-int
-keyboard_open(void)
-{
-    return 0;
+    value = (unsigned char)key;
+
+    if (value >= (unsigned char)'A' &&
+        value <= (unsigned char)'Z') {
+        value =
+            (unsigned char)(value - (unsigned char)'A' +
+                            (unsigned char)'a');
+    }
+
+    nanox_character_name[0] = (char)value;
+    nanox_character_name[1] = '\0';
+
+    return nanox_character_name;
 }
 
+return (const char *)0;
 
-void
-keyboard_close(void)
-{
 }
 
+int keyboard_open(void)
+{
+nanox_keyboard_ready = 1;
+return 0;
+}
+
+void keyboard_close(void)
+{
+nanox_keyboard_ready = 0;
+}
 
 const char *keyboard_keypressed(void)
 {
+GR_KEY key;
+const char *name;
+
+if (!nanox_keyboard_ready)
     return (const char *)0;
+
+/*
+ * nanox.c is the only Nano-X event consumer.
+ *
+ * Events received by nanox_sleep_ms() or by this nonblocking poll
+ * are stored in the Nano-X keyboard queue and returned here.
+ *
+ * Unsupported key codes are discarded while continuing to inspect
+ * the remaining buffered events.
+ */
+while (nanox_get_key(&key)) {
+    name = nanox_translate_key(key);
+
+    if (name != (const char *)0)
+        return name;
+}
+
+return (const char *)0;
+
 }
 
 const char *keyboard_error(void)
 {
-    return "";
+return "";
 }
 
 #else /* Mode X console keyboard */
@@ -147,7 +258,7 @@ static void keyboard_fill_queue(void)
 
 
 /*
- * Return a static one-character LÖVE-style key name.
+ * Return a static one-character key name.
  */
 static const char *
 keyboard_printable_name(unsigned char value)
