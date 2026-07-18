@@ -30,17 +30,15 @@ local rectangle_pixels =
 
 gfx.open(SCREEN_W, SCREEN_H)
 
-gfx.sprite(
-    SPRITE_ID,
-    RECT_W,
-    RECT_H,
-    1,                    -- one animation frame
-    gfx.NO_TRANSPARENT,
-    rectangle_pixels
-)
+-- Draw the first frame.
+gfx.clear(BACKGROUND_COLOR)
+gfx.fill(x, y, RECT_W, RECT_H, RECT_COLOR)
+gfx.present()
 
 while running do
-    -- Process every pending keyboard event.
+    local old_x = x
+    local old_y = y
+
     while true do
         local key = gfx.keypressed()
 
@@ -50,22 +48,17 @@ while running do
 
         if key == "up" then
             y = y - MOVE_STEP
-
         elseif key == "left" then
             x = x - MOVE_STEP
-
         elseif key == "down" then
             y = y + MOVE_STEP
-
         elseif key == "right" then
             x = x + MOVE_STEP
-
         elseif key == "escape" or key == "q" then
             running = false
         end
     end
 
-    -- Keep the entire sprite inside the screen.
     if x < 0 then
         x = 0
     elseif x > SCREEN_W - RECT_W then
@@ -78,19 +71,13 @@ while running do
         y = SCREEN_H - RECT_H
     end
 
-    -- Clear the current back/draw page so the sprite position from
-    -- two frames earlier does not remain visible after page flipping.
-    gfx.clear(BACKGROUND_COLOR)
+    -- Redraw only when the position actually changed.
+    if x ~= old_x or y ~= old_y then
+        gfx.clear(BACKGROUND_COLOR)
+        gfx.fill(x, y, RECT_W, RECT_H, RECT_COLOR)
+        gfx.present()
+    end
 
-    gfx.draw_sprite(
-        SPRITE_ID,
-        x,
-        y,
-        0,       -- frame
-        false    -- horizontal flip
-    )
-
-    gfx.present()
     gfx.sleep(FRAME_DELAY_MS)
 end
 

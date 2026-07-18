@@ -514,10 +514,14 @@ int nanox_get_key(GR_KEY *key)
         return 0;
 
     /*
-     * Avoid a Nano-X poll when sleep() has already buffered input.
+     * Avoid polling Nano-X while a frame is being constructed.
+     * Nano-X event polling may implicitly flush pending drawing requests.
      */
-    if (!nx_close_pending && nx_key_queue_count == 0)
+    if (!nx_close_pending &&
+        nx_key_queue_count == 0 &&
+        !nx_commands_pending) {
         nanox_process_events(0);
+    }
 
     /*
      * A window close request has priority and is returned once as Escape.
