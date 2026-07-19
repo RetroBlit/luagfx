@@ -44,6 +44,7 @@ static int nx_h = 0;
 static int nx_opened = 0;
 
 #define NANOX_KEY_QUEUE_SIZE 16
+#define NANOX_INITIAL_MAP_DELAY_MS 20
 
 static GR_KEY nx_key_queue[NANOX_KEY_QUEUE_SIZE];
 static unsigned char nx_key_queue_start;
@@ -426,9 +427,27 @@ int nanox_open(int w, int h)
 
     nx_fg_valid = 0;
     nx_fg_color = 0;
-
+	
+    /*
+     * GrFlush() has sent the window-map request, and there are no
+     * unflushed application drawing commands at this point.
+     */
     nx_commands_pending = 0;
-    nanox_reset_input_queue();
+
+    /*
+     * Allow Nano-X to complete the initial window mapping and exposure
+     * before returning to Lua. Otherwise, Lua may draw its first frame
+     * before the new window is ready, causing that frame not to appear.
+     *
+     * Any key presses or close request received during this short wait
+     * are stored in the already-cleared input queue and remain available
+     * to Lua.
+     *
+     * This fixed startup delay can be further optimized by waiting until
+     * the initial exposure event is actually received, with a timeout to
+     * avoid blocking indefinitely if no exposure event arrives.
+     */
+    nanox_process_events(NANOX_INITIAL_MAP_DELAY_MS);
 
     nx_err = "no error";
 
