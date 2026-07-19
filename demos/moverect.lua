@@ -1,7 +1,7 @@
 --[[
 This example moves a filled rectangle using the arrow keys, while Escape or Q
-exits the program. The screen is initially empty, and the rectangle appears
-after the first accepted arrow-key movement.
+exits the program. The rectangle is displayed immediately when the program 
+starts and can then be moved using the arrow keys.
 
 Nano-X draws directly to the visible window, so clearing and redrawing the
 complete screen caused visible flickering while a key was held. To reduce
@@ -217,6 +217,10 @@ local function move_rectangle_on_both_pages(old_x, old_y, new_x, new_y)
     -- are idempotent.
     update_rectangle(old_x, old_y, new_x, new_y)
 end
+
+-- Draw the rectangle immediately and synchronize both Mode X pages.
+show_rectangle()
+rectangle_visible = true
 
 while running do
     local old_x = x
