@@ -292,6 +292,13 @@ local function make_sprites()
 
   gfx.sprite(PLAYER_ID, PLAYER_W, PLAYER_H, 4, 0,
              right .. left .. jump_right .. jump_left)
+
+  local compiled, compile_error = gfx.compile_sprite(PLAYER_ID)
+
+  if not compiled then
+    print("Sprite compilation unavailable:")
+    print(compile_error or "unknown error")
+  end
 end
 
 local function level_index(col, row)

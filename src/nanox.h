@@ -48,4 +48,17 @@ void nanox_copy_rect(int src_page, int dst_page,
 int nanox_save_under(int x, int y, int w, int h);
 void nanox_restore_saved(void);
 
+int nanox_compile_sprite(int id,
+                         const unsigned char *pixels,
+                         int w,
+                         int h,
+                         int frames,
+                         int transparent);
+int nanox_draw_compiled_sprite(int id,
+                               int x,
+                               int y,
+                               int frame,
+                               int flip_x);
+void nanox_free_compiled_sprite(int id);
+
 #endif

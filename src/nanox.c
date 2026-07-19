@@ -3,6 +3,7 @@
 
 #include "nano-X.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 
@@ -68,6 +69,32 @@ static unsigned long soft_palette[256];
 
 static int nx_fg_valid = 0;
 static unsigned char nx_fg_color = 0;
+
+#define NANOX_COMPILED_MAX_RUNS 2048
+#define NANOX_COMPILED_MAX_PIXMAP_HEIGHT 32767U
+
+struct nanox_opaque_run {
+    unsigned char x;
+    unsigned char y;
+    unsigned char length;
+};
+
+struct nanox_compiled_sprite {
+    unsigned char used;
+    unsigned char w;
+    unsigned char h;
+    unsigned char frames;
+    unsigned char transparent;
+
+    GR_WINDOW_ID pixmap;
+
+    struct nanox_opaque_run *runs;
+    unsigned short *frame_run_start;
+    unsigned short run_count;
+};
+
+static struct nanox_compiled_sprite nx_compiled[GFX_MAX_SPRITES];
+static unsigned short nx_compiled_run_used = 0;
 
 static GR_COLOR nx_color(unsigned char c)
 {
@@ -229,6 +256,727 @@ static void nanox_flush_pending(void)
 
     GrFlush();
     nx_commands_pending = 0;
+}
+
+static int nanox_pixel_is_transparent(int transparent, unsigned char c)
+{
+    return transparent != GFX_NO_TRANSPARENT && (int)c == transparent;
+}
+
+static int nanox_sprite_sizes_ok(int w,
+                                 int h,
+                                 int frames,
+                                 unsigned int *pix_h,
+                                 unsigned int *pixel_count)
+{
+    unsigned int uw;
+    unsigned int uh;
+    unsigned int uf;
+    unsigned int sheet_height;
+    unsigned int frame_size;
+    unsigned int total_pixels;
+
+    if (w <= 0 || h <= 0 || frames <= 0)
+        return 0;
+
+    /*
+     * The public sprite structure stores these values in unsigned bytes.
+     */
+    if (w > 255 || h > 255 || frames > 255)
+        return 0;
+
+    uw = (unsigned int)w;
+    uh = (unsigned int)h;
+    uf = (unsigned int)frames;
+
+    /*
+     * GrNewPixmapEx() receives a signed int height on the ELKS build.
+     * Therefore the vertical frame sheet must not exceed 32767.
+     */
+    if (uh > NANOX_COMPILED_MAX_PIXMAP_HEIGHT / uf)
+        return 0;
+
+    sheet_height = uh * uf;
+
+    /*
+     * Keep the complete source sprite within a 16-bit unsigned offset.
+     */
+    if (uw > 65535U / uh)
+        return 0;
+
+    frame_size = uw * uh;
+
+    if (frame_size > 65535U / uf)
+        return 0;
+
+    total_pixels = frame_size * uf;
+
+    if (pix_h != 0)
+        *pix_h = sheet_height;
+
+    if (pixel_count != 0)
+        *pixel_count = total_pixels;
+
+    return 1;
+}
+
+static void nanox_pixmap_point(GR_WINDOW_ID pix, int x, int y, unsigned char c)
+{
+    nanox_set_fg(c);
+    GrPoint(pix, nx_gc, x, y);
+}
+
+static unsigned int nanox_count_opaque_runs(const unsigned char *pixels,
+                                            int w,
+                                            int h,
+                                            int frames,
+                                            int transparent)
+{
+    unsigned int run_count;
+    unsigned int frame_size;
+    int frame;
+
+    run_count = 0;
+    frame_size = (unsigned int)w * (unsigned int)h;
+
+    for (frame = 0; frame < frames; frame++) {
+        const unsigned char *fp;
+        int row;
+
+        fp = pixels + (unsigned int)frame * frame_size;
+
+        for (row = 0; row < h; row++) {
+            int col;
+
+            col = 0;
+
+            while (col < w) {
+                unsigned int offset;
+                unsigned char c;
+
+                offset =
+                    (unsigned int)row * (unsigned int)w +
+                    (unsigned int)col;
+
+                c = fp[offset];
+
+                if (nanox_pixel_is_transparent(transparent, c)) {
+                    col++;
+                    continue;
+                }
+
+                run_count++;
+
+                /*
+                 * Stop before an unsigned-short counter could wrap.
+                 * The caller will report that the run limit was exceeded.
+                 */
+                if (run_count > NANOX_COMPILED_MAX_RUNS)
+                    return run_count;
+
+                col++;
+
+                while (col < w) {
+                    offset =
+                        (unsigned int)row * (unsigned int)w +
+                        (unsigned int)col;
+
+                    c = fp[offset];
+
+                    if (nanox_pixel_is_transparent(transparent, c))
+                        break;
+
+                    col++;
+                }
+            }
+        }
+    }
+
+    return run_count;
+}
+
+static int nanox_build_opaque_runs(
+    struct nanox_opaque_run *runs,
+    unsigned short *frame_run_start,
+    const unsigned char *pixels,
+    int w,
+    int h,
+    int frames,
+    int transparent,
+    unsigned short run_count)
+{
+    unsigned int run_index;
+    unsigned int frame_size;
+    int frame;
+
+    if (frame_run_start == 0 || pixels == 0)
+        return -1;
+
+    if (run_count > 0 && runs == 0)
+        return -1;
+
+    run_index = 0;
+    frame_size = (unsigned int)w * (unsigned int)h;
+
+    for (frame = 0; frame < frames; frame++) {
+        const unsigned char *fp;
+        int row;
+
+        frame_run_start[frame] = (unsigned short)run_index;
+
+        fp = pixels + (unsigned int)frame * frame_size;
+
+        for (row = 0; row < h; row++) {
+            int col;
+
+            col = 0;
+
+            while (col < w) {
+                unsigned int offset;
+                unsigned int run_start;
+                unsigned char c;
+
+                offset =
+                    (unsigned int)row * (unsigned int)w +
+                    (unsigned int)col;
+
+                c = fp[offset];
+
+                if (nanox_pixel_is_transparent(transparent, c)) {
+                    col++;
+                    continue;
+                }
+
+                if (run_index >= (unsigned int)run_count)
+                    return -1;
+
+                run_start = (unsigned int)col;
+                col++;
+
+                while (col < w) {
+                    offset =
+                        (unsigned int)row * (unsigned int)w +
+                        (unsigned int)col;
+
+                    c = fp[offset];
+
+                    if (nanox_pixel_is_transparent(transparent, c))
+                        break;
+
+                    col++;
+                }
+
+                runs[run_index].x =
+                    (unsigned char)run_start;
+
+                runs[run_index].y =
+                    (unsigned char)row;
+
+                runs[run_index].length =
+                    (unsigned char)((unsigned int)col - run_start);
+
+                run_index++;
+            }
+        }
+    }
+
+    frame_run_start[frames] = (unsigned short)run_index;
+
+    if (run_index != (unsigned int)run_count)
+        return -1;
+
+    return 0;
+}
+
+static int nanox_upload_sprite_to_pixmap(
+    GR_WINDOW_ID pix,
+    const unsigned char *pixels,
+    int w,
+    int h,
+    int frames,
+    int transparent)
+{
+    unsigned int frame_size;
+    int frame;
+
+    if (!pix || pixels == 0)
+        return -1;
+
+    frame_size = (unsigned int)w * (unsigned int)h;
+
+    for (frame = 0; frame < frames; frame++) {
+        const unsigned char *fp;
+        int row;
+
+        fp = pixels + (unsigned int)frame * frame_size;
+
+        for (row = 0; row < h; row++) {
+            int col;
+
+            for (col = 0; col < w; col++) {
+                unsigned int offset;
+                unsigned char c;
+
+                offset =
+                    (unsigned int)row * (unsigned int)w +
+                    (unsigned int)col;
+
+                c = fp[offset];
+
+                /*
+                 * Transparent pixels need not be initialized because
+                 * compiled transparent drawing copies only opaque spans.
+                 */
+                if (nanox_pixel_is_transparent(transparent, c))
+                    continue;
+
+                nanox_pixmap_point(pix,
+                                   col,
+                                   frame * h + row,
+                                   c);
+            }
+        }
+    }
+
+    nanox_mark_commands_pending();
+    return 0;
+}
+
+static int nanox_blit_compiled_area(GR_WINDOW_ID src,
+                                    int src_x,
+                                    int src_y,
+                                    int dst_x,
+                                    int dst_y,
+                                    int w,
+                                    int h)
+{
+    int cx;
+    int cy;
+    int cw;
+    int ch;
+
+    if (!nx_opened || !nx_win || !nx_gc || !src)
+        return 0;
+
+    cx = dst_x;
+    cy = dst_y;
+    cw = w;
+    ch = h;
+
+    if (!clip_rect(&cx, &cy, &cw, &ch))
+        return 0;
+
+    src_x += cx - dst_x;
+    src_y += cy - dst_y;
+
+    GrCopyArea(nx_win, nx_gc,
+               cx, cy, cw, ch,
+               src,
+               src_x, src_y,
+               MWROP_COPY);
+
+    nanox_mark_commands_pending();
+    return 1;
+}
+
+void nanox_free_compiled_sprite(int id)
+{
+    struct nanox_compiled_sprite *cs;
+
+    if (id < 0 || id >= GFX_MAX_SPRITES)
+        return;
+
+    cs = &nx_compiled[id];
+
+    if (!cs->used)
+        return;
+
+    if (cs->pixmap)
+        GrDestroyWindow(cs->pixmap);
+
+    if (cs->runs)
+        free(cs->runs);
+
+    if (cs->frame_run_start)
+        free(cs->frame_run_start);
+
+    if (cs->run_count <= nx_compiled_run_used)
+        nx_compiled_run_used =
+            (unsigned short)(nx_compiled_run_used - cs->run_count);
+
+    cs->used = 0;
+    cs->w = 0;
+    cs->h = 0;
+    cs->frames = 0;
+    cs->transparent = 0;
+    cs->pixmap = 0;
+    cs->runs = 0;
+    cs->frame_run_start = 0;
+    cs->run_count = 0;
+}
+
+static void nanox_free_all_compiled_sprites(void)
+{
+    int id;
+
+    for (id = 0; id < GFX_MAX_SPRITES; id++)
+        nanox_free_compiled_sprite(id);
+
+    nx_compiled_run_used = 0;
+}
+
+int nanox_compile_sprite(int id,
+                         const unsigned char *pixels,
+                         int w,
+                         int h,
+                         int frames,
+                         int transparent)
+{
+    struct nanox_compiled_sprite *cs;
+    unsigned int pix_h;
+    unsigned int pixel_count;
+    unsigned int counted_runs;
+    unsigned int run_budget;
+    unsigned int run_bytes;
+    unsigned int frame_index_count;
+    unsigned int index_bytes;
+    unsigned short run_count;
+    GR_WINDOW_ID pixmap;
+    struct nanox_opaque_run *runs;
+    unsigned short *frame_run_start;
+
+    if (id < 0 || id >= GFX_MAX_SPRITES) {
+        nx_err = "compiled sprite id out of range";
+        return -1;
+    }
+
+    if (!nx_opened || !nx_gc) {
+        nx_err = "Nano-X is not open";
+        return -1;
+    }
+
+    if (pixels == 0) {
+        nx_err = "compiled sprite has no pixels";
+        return -1;
+    }
+
+    if (transparent < 0 || transparent > 255) {
+        nx_err = "invalid sprite transparency value";
+        return -1;
+    }
+
+    if (!nanox_sprite_sizes_ok(w,
+                               h,
+                               frames,
+                               &pix_h,
+                               &pixel_count)) {
+        nx_err = "compiled sprite dimensions are too large";
+        return -1;
+    }
+
+    /*
+     * pixel_count is produced as part of the overflow validation above.
+     */
+    (void)pixel_count;
+
+    cs = &nx_compiled[id];
+
+    /*
+     * gfx_define_sprite() releases a compiled representation whenever
+     * the sprite definition changes. Therefore matching metadata here
+     * represents an unchanged sprite.
+     */
+    if (cs->used &&
+        cs->pixmap &&
+        cs->w == (unsigned char)w &&
+        cs->h == (unsigned char)h &&
+        cs->frames == (unsigned char)frames &&
+        cs->transparent == (unsigned char)transparent) {
+        if (transparent == GFX_NO_TRANSPARENT ||
+            (cs->frame_run_start != 0 &&
+             (cs->run_count == 0 || cs->runs != 0))) {
+            nx_err = "no error";
+            return 0;
+        }
+    }
+
+    if (transparent == GFX_NO_TRANSPARENT) {
+        counted_runs = 0;
+    } else {
+        counted_runs =
+            nanox_count_opaque_runs(pixels,
+                                    w,
+                                    h,
+                                    frames,
+                                    transparent);
+    }
+
+    if (counted_runs > NANOX_COMPILED_MAX_RUNS) {
+        nx_err = "compiled sprite run limit exceeded";
+        return -1;
+    }
+
+    if (nx_compiled_run_used > NANOX_COMPILED_MAX_RUNS) {
+        nx_err = "compiled sprite run accounting error";
+        return -1;
+    }
+
+    run_budget =
+        (unsigned int)NANOX_COMPILED_MAX_RUNS -
+        (unsigned int)nx_compiled_run_used;
+
+    /*
+     * The old representation for this ID will be released only after
+     * the replacement has been built successfully.
+     */
+    if (cs->used) {
+        if (cs->run_count > nx_compiled_run_used) {
+            nx_err = "compiled sprite run accounting error";
+            return -1;
+        }
+
+        run_budget += (unsigned int)cs->run_count;
+    }
+
+    if (counted_runs > run_budget) {
+        nx_err = "compiled sprite run limit exceeded";
+        return -1;
+    }
+
+    run_count = (unsigned short)counted_runs;
+    runs = 0;
+    frame_run_start = 0;
+    pixmap = 0;
+
+    /*
+     * Transparent sprites always need the frame index, even when every
+     * frame is completely transparent and run_count is zero.
+     */
+    if (transparent != GFX_NO_TRANSPARENT) {
+        frame_index_count = (unsigned int)frames + 1U;
+
+        if (frame_index_count >
+            65535U / (unsigned int)sizeof(unsigned short)) {
+            nx_err = "compiled sprite frame index overflow";
+            return -1;
+        }
+
+        index_bytes =
+            frame_index_count *
+            (unsigned int)sizeof(unsigned short);
+
+        frame_run_start =
+            (unsigned short *)malloc((size_t)index_bytes);
+
+        if (frame_run_start == 0) {
+            nx_err = "cannot allocate compiled sprite frame index";
+            return -1;
+        }
+
+        if (run_count > 0) {
+            if ((unsigned int)run_count >
+                65535U /
+                (unsigned int)sizeof(struct nanox_opaque_run)) {
+                free(frame_run_start);
+                nx_err = "compiled sprite run allocation overflow";
+                return -1;
+            }
+
+            run_bytes =
+                (unsigned int)run_count *
+                (unsigned int)sizeof(struct nanox_opaque_run);
+
+            runs =
+                (struct nanox_opaque_run *)malloc((size_t)run_bytes);
+
+            if (runs == 0) {
+                free(frame_run_start);
+                nx_err = "cannot allocate compiled sprite runs";
+                return -1;
+            }
+        }
+
+        if (nanox_build_opaque_runs(runs,
+                                    frame_run_start,
+                                    pixels,
+                                    w,
+                                    h,
+                                    frames,
+                                    transparent,
+                                    run_count) != 0) {
+            if (runs != 0)
+                free(runs);
+
+            free(frame_run_start);
+
+            nx_err = "compiled sprite span build failed";
+            return -1;
+        }
+    }
+
+    pixmap = GrNewPixmapEx(w, (int)pix_h, 0, 0);
+
+    if (!pixmap) {
+        if (runs != 0)
+            free(runs);
+
+        if (frame_run_start != 0)
+            free(frame_run_start);
+
+        nx_err = "cannot allocate compiled sprite pixmap";
+        return -1;
+    }
+
+    if (nanox_upload_sprite_to_pixmap(pixmap,
+                                      pixels,
+                                      w,
+                                      h,
+                                      frames,
+                                      transparent) != 0) {
+        GrDestroyWindow(pixmap);
+
+        if (runs != 0)
+            free(runs);
+
+        if (frame_run_start != 0)
+            free(frame_run_start);
+
+        nx_err = "compiled sprite upload failed";
+        return -1;
+    }
+
+    /*
+     * Everything succeeded. Only now replace the old representation.
+     */
+    nanox_free_compiled_sprite(id);
+
+    cs->used = 1;
+    cs->w = (unsigned char)w;
+    cs->h = (unsigned char)h;
+    cs->frames = (unsigned char)frames;
+    cs->transparent = (unsigned char)transparent;
+    cs->pixmap = pixmap;
+    cs->runs = runs;
+    cs->frame_run_start = frame_run_start;
+    cs->run_count = run_count;
+
+    nx_compiled_run_used =
+        (unsigned short)((unsigned int)nx_compiled_run_used +
+                         (unsigned int)run_count);
+
+    nx_err = "no error";
+    return 0;
+}
+
+int nanox_draw_compiled_sprite(int id,
+                               int x,
+                               int y,
+                               int frame,
+                               int flip_x)
+{
+    struct nanox_compiled_sprite *cs;
+    int src_y;
+
+    /*
+     * No second server-side horizontally flipped copy is allocated.
+     * The graphics layer will fall back to nanox_draw_bitmap().
+     */
+    if (flip_x)
+        return -1;
+
+    if (id < 0 || id >= GFX_MAX_SPRITES)
+        return -1;
+
+    if (!nx_opened || !nx_win || !nx_gc)
+        return -1;
+
+    cs = &nx_compiled[id];
+
+    if (!cs->used || !cs->pixmap)
+        return -1;
+
+    if (frame < 0 || frame >= (int)cs->frames)
+        frame = 0;
+
+    /*
+     * A completely off-screen compiled sprite is still a successful
+     * compiled draw. Do not invoke the slow bitmap fallback.
+     */
+    if (x >= nx_w ||
+        y >= nx_h ||
+        x + (int)cs->w <= 0 ||
+        y + (int)cs->h <= 0) {
+        return 0;
+    }
+
+    src_y = frame * (int)cs->h;
+
+    if (cs->transparent == GFX_NO_TRANSPARENT) {
+        /*
+         * nanox_blit_compiled_area() performs window-edge clipping.
+         * A clipped-away copy is still a valid compiled no-op.
+         */
+        nanox_blit_compiled_area(cs->pixmap,
+                                 0,
+                                 src_y,
+                                 x,
+                                 y,
+                                 (int)cs->w,
+                                 (int)cs->h);
+
+        return 0;
+    }
+
+    if (cs->frame_run_start == 0)
+        return -1;
+
+    {
+        unsigned short start;
+        unsigned short end;
+        unsigned short i;
+
+        start = cs->frame_run_start[frame];
+        end = cs->frame_run_start[frame + 1];
+
+        if (start > end || end > cs->run_count)
+            return -1;
+
+        /*
+         * A fully transparent frame contains no runs. It is a successful
+         * compiled no-op, not a reason to use the bitmap fallback.
+         */
+        if (start == end)
+            return 0;
+
+        if (cs->runs == 0)
+            return -1;
+
+        for (i = start; i < end; i++) {
+            const struct nanox_opaque_run *run;
+            int dst_x;
+            int dst_y;
+            int src_x;
+            int src_row_y;
+
+            run = &cs->runs[i];
+
+            dst_x = x + (int)run->x;
+            dst_y = y + (int)run->y;
+
+            src_x = (int)run->x;
+            src_row_y = src_y + (int)run->y;
+
+            nanox_blit_compiled_area(cs->pixmap,
+                                     src_x,
+                                     src_row_y,
+                                     dst_x,
+                                     dst_y,
+                                     (int)run->length,
+                                     1);
+        }
+    }
+
+    return 0;
 }
 
 static int nanox_redraw_from_background(void)
@@ -457,10 +1205,16 @@ int nanox_open(int w, int h)
 void nanox_close(void)
 {
     /*
-     * Send any final pending drawing commands before resources are
-     * destroyed.
+     * First send pending drawing and pixmap-upload commands while all
+     * source and destination resources still exist.
      */
     nanox_flush_pending();
+
+    /*
+     * Then release permanent compiled sprite pixmaps and their client
+     * metadata before closing the Nano-X connection.
+     */
+    nanox_free_all_compiled_sprites();
 
     if (nx_save_pix) {
         GrDestroyWindow(nx_save_pix);
@@ -718,21 +1472,29 @@ void nanox_draw_bitmap(const unsigned char *pixels,
         int col;
 
         sy = y + row;
+
         if (sy < 0 || sy >= nx_h)
             continue;
 
         col = 0;
+
         while (col < bw) {
             int src_col;
             int run_start;
             int run_len;
+            unsigned int offset;
             unsigned char c;
             unsigned char run_color;
 
             src_col = flip_x ? (bw - 1 - col) : col;
-            c = pixels[row * bw + src_col];
 
-            if ((int)c == transparent) {
+            offset =
+                (unsigned int)row * (unsigned int)bw +
+                (unsigned int)src_col;
+
+            c = pixels[offset];
+
+            if (nanox_pixel_is_transparent(transparent, c)) {
                 col++;
                 continue;
             }
@@ -744,16 +1506,26 @@ void nanox_draw_bitmap(const unsigned char *pixels,
 
             while (col < bw) {
                 src_col = flip_x ? (bw - 1 - col) : col;
-                c = pixels[row * bw + src_col];
 
-                if ((int)c == transparent || c != run_color)
+                offset =
+                    (unsigned int)row * (unsigned int)bw +
+                    (unsigned int)src_col;
+
+                c = pixels[offset];
+
+                if (nanox_pixel_is_transparent(transparent, c) ||
+                    c != run_color) {
                     break;
+                }
 
                 run_len++;
                 col++;
             }
 
-            nanox_hline(x + run_start, sy, run_len, run_color);
+            nanox_hline(x + run_start,
+                        sy,
+                        run_len,
+                        run_color);
         }
     }
 }

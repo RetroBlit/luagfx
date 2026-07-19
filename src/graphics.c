@@ -26,7 +26,9 @@ struct gfx_sprite_slot {
     unsigned char transparent;
     const unsigned char *pixels;
 
-#ifndef USE_NANOX_BACKEND
+#ifdef USE_NANOX_BACKEND
+    unsigned char nx_compiled;
+#else
     unsigned char mx_compiled;
     struct vgax_compiled_sprite mx_sprite;
 #endif
@@ -542,12 +544,31 @@ void gfx_fill(int x, int y, int w, int h, int color)
 int gfx_define_sprite(int id, int w, int h, int frames,
                       int transparent, const unsigned char *pixels)
 {
-    if (id < 0 || id >= GFX_MAX_SPRITES)
+    if (id < 0 || id >= GFX_MAX_SPRITES) {
+        gfx_err = "sprite id out of range";
         return -1;
-    if (w <= 0 || h <= 0 || frames <= 0 || pixels == 0)
+    }
+
+    if (w <= 0 || h <= 0 || frames <= 0 || pixels == 0) {
+        gfx_err = "invalid sprite definition";
         return -1;
-    if (w > 255 || h > 255 || frames > 255)
+    }
+
+    if (w > 255 || h > 255 || frames > 255) {
+        gfx_err = "sprite dimensions are too large";
         return -1;
+    }
+
+#ifdef USE_NANOX_BACKEND
+    /*
+     * A newly defined sprite invalidates any server-side representation
+     * previously associated with this ID.
+     *
+     * Do this only after the new arguments have passed validation so an
+     * invalid definition does not destroy the old compiled sprite.
+     */
+    nanox_free_compiled_sprite(id);
+#endif
 
     sprites[id].used = 1;
     sprites[id].w = (unsigned char)w;
@@ -556,7 +577,16 @@ int gfx_define_sprite(int id, int w, int h, int frames,
     sprites[id].transparent = (unsigned char)transparent;
     sprites[id].pixels = pixels;
 
-#ifndef USE_NANOX_BACKEND
+#ifdef USE_NANOX_BACKEND
+    /*
+     * Nano-X compilation is explicit. gfx.sprite() itself does not
+     * allocate permanent Nano-X server memory.
+     */
+    sprites[id].nx_compiled = 0;
+#else
+    /*
+     * Preserve the existing automatic Mode X compilation behaviour.
+     */
     sprites[id].mx_compiled = 0;
 
     {
@@ -565,25 +595,31 @@ int gfx_define_sprite(int id, int w, int h, int frames,
         unsigned short run_left;
 
         phase_need = (unsigned short)(frames * 4);
-        phase_left = (unsigned short)(GFX_MX_MAX_SPRITE_PHASES -
-                                      mx_sprite_phase_used);
-        run_left = (unsigned short)(GFX_MX_MAX_SPRITE_RUNS -
-                                    mx_sprite_run_used);
+
+        phase_left =
+            (unsigned short)(GFX_MX_MAX_SPRITE_PHASES -
+                             mx_sprite_phase_used);
+
+        run_left =
+            (unsigned short)(GFX_MX_MAX_SPRITE_RUNS -
+                             mx_sprite_run_used);
 
         if (phase_need <= phase_left && run_left > 0) {
-            if (vgax_compile_sprite(&sprites[id].mx_sprite,
-                                    pixels,
-                                    (unsigned char)w,
-                                    (unsigned char)h,
-                                    (unsigned char)frames,
-                                    (unsigned char)transparent,
-                                    &mx_sprite_phases[mx_sprite_phase_used],
-                                    &mx_sprite_runs[mx_sprite_run_used],
-                                    run_left) == 0) {
+            if (vgax_compile_sprite(
+                    &sprites[id].mx_sprite,
+                    pixels,
+                    (unsigned char)w,
+                    (unsigned char)h,
+                    (unsigned char)frames,
+                    (unsigned char)transparent,
+                    &mx_sprite_phases[mx_sprite_phase_used],
+                    &mx_sprite_runs[mx_sprite_run_used],
+                    run_left) == 0) {
                 sprites[id].mx_compiled = 1;
 
                 mx_sprite_phase_used =
-                    (unsigned short)(mx_sprite_phase_used + phase_need);
+                    (unsigned short)(mx_sprite_phase_used +
+                                     phase_need);
 
                 mx_sprite_run_used =
                     (unsigned short)(mx_sprite_run_used +
@@ -593,7 +629,118 @@ int gfx_define_sprite(int id, int w, int h, int frames,
     }
 #endif
 
+    gfx_err = "no error";
     return 0;
+}
+
+int gfx_compile_sprite(int id)
+{
+    struct gfx_sprite_slot *s;
+
+    if (!gfx_opened) {
+        gfx_err = "graphics is not open";
+        return -1;
+    }
+
+    if (id < 0 || id >= GFX_MAX_SPRITES) {
+        gfx_err = "sprite id out of range";
+        return -1;
+    }
+
+    s = &sprites[id];
+
+    if (!s->used || s->pixels == 0) {
+        gfx_err = "sprite is not defined";
+        return -1;
+    }
+
+#ifdef USE_NANOX_BACKEND
+    /*
+     * Repeated compilation of an unchanged sprite is harmless and does
+     * not allocate another server pixmap.
+     */
+    if (s->nx_compiled) {
+        gfx_err = "no error";
+        return 0;
+    }
+
+    if (nanox_compile_sprite(id,
+                             s->pixels,
+                             (int)s->w,
+                             (int)s->h,
+                             (int)s->frames,
+                             (int)s->transparent) != 0) {
+        /*
+         * nanox_compile_sprite() is transactional. A failed compilation
+         * leaves the original client-side sprite available.
+         */
+        gfx_err = nanox_error();
+        return -1;
+    }
+
+    s->nx_compiled = 1;
+
+    gfx_err = "no error";
+    return 0;
+#else
+    /*
+     * The normal Mode X definition path already attempts automatic
+     * compilation. This explicit call also supports a sprite that could
+     * not be compiled at definition time.
+     */
+    if (s->mx_compiled) {
+        gfx_err = "no error";
+        return 0;
+    }
+
+    {
+        unsigned short phase_need;
+        unsigned short phase_left;
+        unsigned short run_left;
+
+        phase_need = (unsigned short)(s->frames * 4);
+
+        phase_left =
+            (unsigned short)(GFX_MX_MAX_SPRITE_PHASES -
+                             mx_sprite_phase_used);
+
+        run_left =
+            (unsigned short)(GFX_MX_MAX_SPRITE_RUNS -
+                             mx_sprite_run_used);
+
+        if (phase_need > phase_left || run_left == 0) {
+            gfx_err = "Mode X sprite compile buffers full";
+            return -1;
+        }
+
+        if (vgax_compile_sprite(
+                &s->mx_sprite,
+                s->pixels,
+                s->w,
+                s->h,
+                s->frames,
+                s->transparent,
+                &mx_sprite_phases[mx_sprite_phase_used],
+                &mx_sprite_runs[mx_sprite_run_used],
+                run_left) != 0) {
+            gfx_err = "Mode X sprite compile failed";
+            return -1;
+        }
+
+        s->mx_compiled = 1;
+
+        mx_sprite_phase_used =
+            (unsigned short)(mx_sprite_phase_used +
+                             phase_need);
+
+        mx_sprite_run_used =
+            (unsigned short)(mx_sprite_run_used +
+                             s->mx_sprite.run_count);
+    }
+
+    gfx_err = "no error";
+    return 0;
+#endif
 }
 
 void gfx_draw_sprite(int id, int x, int y, int frame, int flip_x)
@@ -602,23 +749,62 @@ void gfx_draw_sprite(int id, int x, int y, int frame, int flip_x)
     unsigned int frame_size;
     const unsigned char *p;
 
+    if (!gfx_opened)
+        return;
+
     if (id < 0 || id >= GFX_MAX_SPRITES)
         return;
 
     s = &sprites[id];
 
+    /*
+     * Keep the original pixels because Nano-X still uses them for:
+     *
+     * - uncompiled sprites;
+     * - flip_x;
+     * - failed compilation fallback.
+     */
     if (!s->used || s->pixels == 0)
         return;
 
     if (frame < 0 || frame >= (int)s->frames)
         frame = 0;
 
-    frame_size = (unsigned int)s->w * (unsigned int)s->h;
-    p = s->pixels + (unsigned int)frame * frame_size;
+    frame_size =
+        (unsigned int)s->w *
+        (unsigned int)s->h;
+
+    p = s->pixels +
+        (unsigned int)frame * frame_size;
 
 #ifdef USE_NANOX_BACKEND
+    /*
+     * Save the area behind this sprite. The existing Nano-X save-under
+     * implementation clips the saved rectangle to the window.
+     */
     nanox_save_under(x, y, s->w, s->h);
-    nanox_draw_bitmap(p, s->w, s->h, s->transparent, x, y, flip_x);
+
+    /*
+     * nanox_draw_compiled_sprite() returns -1 for an unsupported case,
+     * currently flip_x, so the original bitmap renderer remains the
+     * automatic fallback.
+     */
+    if (s->nx_compiled &&
+        nanox_draw_compiled_sprite(id,
+                                   x,
+                                   y,
+                                   frame,
+                                   flip_x) == 0) {
+        return;
+    }
+
+    nanox_draw_bitmap(p,
+                      s->w,
+                      s->h,
+                      s->transparent,
+                      x,
+                      y,
+                      flip_x);
 #else
     if (s->mx_compiled &&
         !flip_x &&
@@ -671,29 +857,64 @@ void gfx_move_sprite(int id,
         unsigned int frame_size;
         const unsigned char *p;
 
-        frame_size = (unsigned int)s->w * (unsigned int)s->h;
-        p = s->pixels + (unsigned int)frame * frame_size;
+        frame_size =
+            (unsigned int)s->w *
+            (unsigned int)s->h;
+
+        p = s->pixels +
+            (unsigned int)frame * frame_size;
 
         /*
-        ** Nano-X path:
-        ** 1. Restore old sprite area from saved-under buffer/window.
-        ** 2. Save the background under the new sprite position.
-        ** 3. Draw the sprite at the new position.
-        */
-        nanox_restore(old_x, old_y, s->w, s->h);
-        nanox_save_under(new_x, new_y, s->w, s->h);
-        nanox_draw_bitmap(p, s->w, s->h, s->transparent,
-                          new_x, new_y, flip_x);
+         * Restore the previous saved-under rectangle. In the normal
+         * low-memory Nano-X configuration this does not depend on old_x
+         * and old_y because nanox_restore() uses nanox_restore_saved().
+         */
+        nanox_restore(old_x,
+                      old_y,
+                      s->w,
+                      s->h);
+
+        /*
+         * Save the new destination before drawing either representation.
+         */
+        nanox_save_under(new_x,
+                         new_y,
+                         s->w,
+                         s->h);
+
+        if (s->nx_compiled &&
+            nanox_draw_compiled_sprite(id,
+                                       new_x,
+                                       new_y,
+                                       frame,
+                                       flip_x) == 0) {
+            return;
+        }
+
+        nanox_draw_bitmap(p,
+                          s->w,
+                          s->h,
+                          s->transparent,
+                          new_x,
+                          new_y,
+                          flip_x);
     }
 #else
     /*
-    ** Mode X path:
-    ** Restore from background page, then draw to current draw page.
-    */
-    modex_copy_pixels(VGAX_PAGE2, mx_draw_page,
-                      old_x, old_y, s->w, s->h);
+     * Preserve the existing Mode X page-based sprite movement.
+     */
+    modex_copy_pixels(VGAX_PAGE2,
+                      mx_draw_page,
+                      old_x,
+                      old_y,
+                      s->w,
+                      s->h);
 
-    gfx_draw_sprite(id, new_x, new_y, frame, flip_x);
+    gfx_draw_sprite(id,
+                    new_x,
+                    new_y,
+                    frame,
+                    flip_x);
 #endif
 }
 

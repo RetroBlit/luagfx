@@ -67,6 +67,8 @@ void gfx_move_sprite(int id,
                      int frame,
                      int flip_x);
 
+int gfx_compile_sprite(int id);
+
 int gfx_define_tileset(int id, int tile_w, int tile_h, int count,
                        int transparent, const unsigned char *pixels);
 void gfx_draw_tile(int tileset_id, int tile_id, int x, int y);

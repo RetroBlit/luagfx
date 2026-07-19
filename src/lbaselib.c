@@ -603,6 +603,22 @@ static int luaG_sprite(lua_State *L) {
   return 0;
 }
 
+static int luaG_compile_sprite(lua_State *L) {
+  int id = luaL_checkint(L, 1);
+
+  luaL_argcheck(L, id >= 0 && id < GFX_MAX_SPRITES, 1,
+                "sprite id out of range");
+
+  if (gfx_compile_sprite(id) != 0) {
+    lua_pushboolean(L, 0);
+    lua_pushstring(L, gfx_error());
+    return 2;
+  }
+
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
 static int luaG_draw_sprite(lua_State *L) {
   int id = luaL_checkint(L, 1);
   int x = luaL_checkint(L, 2);
@@ -818,6 +834,7 @@ static const luaL_Reg gfx_funcs[] = {
   {"text_width", luaG_text_width},
   {"text_height", luaG_text_height},
   {"sprite", luaG_sprite},
+  {"compile_sprite", luaG_compile_sprite},
   {"draw_sprite", luaG_draw_sprite},
   {"move_sprite", luaG_move_sprite},
   {"tileset", luaG_tileset},
