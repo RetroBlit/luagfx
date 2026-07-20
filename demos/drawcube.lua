@@ -67,7 +67,7 @@ local function project3D(x, y, z)
   local screenX = x * scale * size + cx
   local screenY = y * scale * size + cy
 
-  -- Avoid 0.5 literal for your ELKS Lua parser.
+  -- Avoids 0.5 literal
   return math.floor(screenX + 1 / 2),
          math.floor(screenY + 1 / 2)
 end
@@ -122,6 +122,18 @@ local function main()
   gfx.present()
 
   while true do
+    while true do
+      local key = gfx.keypressed()
+
+      if key == nil then
+        break
+      end
+
+      if key == "escape" or key == "q" then
+        return
+      end
+    end
+
     local old = old_for_page[draw_page_index]
 
     -- Erase only the cube previously drawn on this page.
@@ -154,7 +166,7 @@ local function main()
       angleY = angleY - math.pi * 2
     end
 
-    --gfx.sleep(20)
+    gfx.sleep(2) -- it is recommended to use at least 4 ms of pause per frame with Nano-X backend, 2 is OK here
   end
 end
 

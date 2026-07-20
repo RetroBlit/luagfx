@@ -1,18 +1,13 @@
 --[[
-This example moves a filled rectangle using the arrow keys, while Escape or Q
-exits the program. The rectangle is displayed immediately when the program 
-starts and can then be moved using the arrow keys.
+Moves a filled rectangle with the arrow keys.
+Escape or Q exits.
 
-Nano-X draws directly to the visible window, so clearing and redrawing the
-complete screen caused visible flickering while a key was held. To reduce
-this flickering, repeated keyboard events are combined into one movement per
-frame, and only the narrow strips exposed by the rectangle's movement are
-updated.
+Queued key-repeat events are combined into one movement per frame.
 
-Mode X alternates between two drawing pages whenever gfx.present() is called.
-The same strip update is therefore applied to both pages so that stale parts
-of the rectangle do not remain on the alternate page. This allows the same
-Lua program to work correctly with both Nano-X and Mode X.
+Nano-X uses sprite save-under to restore the previous rectangle area.
+Mode X uses its background page. Because gfx.present() alternates between
+two Mode X drawing pages, each movement is applied once before present()
+and once afterward to keep both pages synchronized.
 ]]
 
 local SCREEN_W = 320
@@ -25,244 +20,50 @@ local BACKGROUND_COLOR = 0
 local RECT_COLOR = 12
 
 local MOVE_STEP = 3
-local FRAME_DELAY_MS = 16
+local FRAME_DELAY_MS = 4 -- it is recommended to use at least 4 ms of pause per frame with Nano-X backend
+
+local SPRITE_ID = 0
 
 local x = math.floor((SCREEN_W - RECT_W) / 2)
 local y = math.floor((SCREEN_H - RECT_H) / 2)
 
 local running = true
-local rectangle_visible = false
 
 gfx.open(SCREEN_W, SCREEN_H)
 
--- Clear both Mode X pages.
--- In Nano-X, this simply clears the same visible window twice.
-gfx.clear(BACKGROUND_COLOR)
-gfx.present()
-
-gfx.clear(BACKGROUND_COLOR)
-gfx.present()
-
--- Apply one rectangle movement to the current drawing surface.
--- This function does not call gfx.present().
-local function update_rectangle(old_x, old_y, new_x, new_y)
-    local current_x = old_x
-    local current_y = old_y
-
-    -- Horizontal movement.
-    if new_x ~= current_x then
-        local dx = new_x - current_x
-        local amount = math.abs(dx)
-
-        if amount >= RECT_W then
-            -- The old and new rectangles do not overlap.
-            gfx.fill(
-                new_x,
-                current_y,
-                RECT_W,
-                RECT_H,
-                RECT_COLOR
-            )
-
-            gfx.fill(
-                current_x,
-                current_y,
-                RECT_W,
-                RECT_H,
-                BACKGROUND_COLOR
-            )
-
-        elseif dx > 0 then
-            -- Add the new strip on the right.
-            gfx.fill(
-                current_x + RECT_W,
-                current_y,
-                amount,
-                RECT_H,
-                RECT_COLOR
-            )
-
-            -- Remove the abandoned strip on the left.
-            gfx.fill(
-                current_x,
-                current_y,
-                amount,
-                RECT_H,
-                BACKGROUND_COLOR
-            )
-
-        else
-            -- Add the new strip on the left.
-            gfx.fill(
-                new_x,
-                current_y,
-                amount,
-                RECT_H,
-                RECT_COLOR
-            )
-
-            -- Remove the abandoned strip on the right.
-            gfx.fill(
-                new_x + RECT_W,
-                current_y,
-                amount,
-                RECT_H,
-                BACKGROUND_COLOR
-            )
-        end
-
-        current_x = new_x
-    end
-
-    -- Vertical movement.
-    if new_y ~= current_y then
-        local dy = new_y - current_y
-        local amount = math.abs(dy)
-
-        if amount >= RECT_H then
-            -- The old and new rectangles do not overlap.
-            gfx.fill(
-                current_x,
-                new_y,
-                RECT_W,
-                RECT_H,
-                RECT_COLOR
-            )
-
-            gfx.fill(
-                current_x,
-                current_y,
-                RECT_W,
-                RECT_H,
-                BACKGROUND_COLOR
-            )
-
-        elseif dy > 0 then
-            -- Add the new strip at the bottom.
-            gfx.fill(
-                current_x,
-                current_y + RECT_H,
-                RECT_W,
-                amount,
-                RECT_COLOR
-            )
-
-            -- Remove the abandoned strip at the top.
-            gfx.fill(
-                current_x,
-                current_y,
-                RECT_W,
-                amount,
-                BACKGROUND_COLOR
-            )
-
-        else
-            -- Add the new strip at the top.
-            gfx.fill(
-                current_x,
-                new_y,
-                RECT_W,
-                amount,
-                RECT_COLOR
-            )
-
-            -- Remove the abandoned strip at the bottom.
-            gfx.fill(
-                current_x,
-                new_y + RECT_H,
-                RECT_W,
-                amount,
-                BACKGROUND_COLOR
-            )
-        end
-    end
-end
-
--- Draw the initial rectangle on both Mode X pages.
+-- Initialize the background.
 --
--- In Nano-X, the second fill simply repeats the same drawing operation.
-local function show_rectangle()
-    gfx.fill(
-        x,
-        y,
-        RECT_W,
-        RECT_H,
-        RECT_COLOR
-    )
+-- Mode X copies this background to PAGE2 and both drawing pages.
+-- Nano-X uses either its background cache or sprite save-under.
+gfx.clear(BACKGROUND_COLOR)
+gfx.set_background()
 
-    gfx.present()
+-- Define the filled rectangle as a one-frame sprite.
+local rectangle_pixels =
+    string.rep(string.char(RECT_COLOR), RECT_W * RECT_H)
 
-    -- Synchronize the other Mode X page.
-    gfx.fill(
-        x,
-        y,
-        RECT_W,
-        RECT_H,
-        RECT_COLOR
-    )
-end
+gfx.sprite(
+    SPRITE_ID,
+    RECT_W,
+    RECT_H,
+    1,
+    BACKGROUND_COLOR,
+    rectangle_pixels
+)
 
--- Move the rectangle and synchronize both Mode X pages.
-local function move_rectangle_on_both_pages(old_x, old_y, new_x, new_y)
-    -- Update the current hidden Mode X page, or the Nano-X window.
-    update_rectangle(old_x, old_y, new_x, new_y)
+-- Optional optimization. Raw drawing remains available as a fallback.
+gfx.compile_sprite(SPRITE_ID)
 
-    -- Display the completed Mode X page or flush Nano-X.
-    gfx.present()
+-- Draw the initial rectangle on the first Mode X page.
+gfx.draw_sprite(SPRITE_ID, x, y, 0, false)
+gfx.present()
 
-    -- Mode X now draws to its other hidden page.
-    -- Apply the identical change so that both pages remain synchronized.
-    --
-    -- In Nano-X, repeating the operation is safe because the strip updates
-    -- are idempotent.
-    update_rectangle(old_x, old_y, new_x, new_y)
-end
+-- Synchronize the other Mode X page.
+--
+-- On Nano-X this repeats the same final drawing safely.
+gfx.draw_sprite(SPRITE_ID, x, y, 0, false)
 
--- Draw the rectangle immediately and synchronize both Mode X pages.
-show_rectangle()
-rectangle_visible = true
-
-while running do
-    local old_x = x
-    local old_y = y
-    local latest_direction = nil
-
-    -- Drain all queued events but keep only the newest arrow direction.
-    while true do
-        local key = gfx.keypressed()
-
-        if key == nil then
-            break
-        end
-
-        if key == "up" or
-           key == "left" or
-           key == "down" or
-           key == "right" then
-
-            latest_direction = key
-
-        elseif key == "escape" or key == "q" then
-            running = false
-        end
-    end
-
-    if running then
-        if latest_direction == "up" then
-            y = y - MOVE_STEP
-
-        elseif latest_direction == "left" then
-            x = x - MOVE_STEP
-
-        elseif latest_direction == "down" then
-            y = y + MOVE_STEP
-
-        elseif latest_direction == "right" then
-            x = x + MOVE_STEP
-        end
-    end
-
-    -- Keep the entire rectangle inside the screen.
+local function clamp_position()
     if x < 0 then
         x = 0
     elseif x > SCREEN_W - RECT_W then
@@ -274,19 +75,74 @@ while running do
     elseif y > SCREEN_H - RECT_H then
         y = SCREEN_H - RECT_H
     end
+end
 
-    if running and latest_direction ~= nil then
-        if not rectangle_visible then
-            show_rectangle()
-            rectangle_visible = true
+local function move_on_both_pages(old_x, old_y, new_x, new_y)
+    -- Update the current Mode X draw page, or the Nano-X window.
+    gfx.move_sprite(
+        SPRITE_ID,
+        old_x,
+        old_y,
+        new_x,
+        new_y,
+        0,
+        false
+    )
 
-        elseif x ~= old_x or y ~= old_y then
-            move_rectangle_on_both_pages(
-                old_x,
-                old_y,
-                x,
-                y
-            )
+    -- Display the completed Mode X page, or flush Nano-X.
+    gfx.present()
+
+    -- Synchronize the other Mode X page.
+    gfx.move_sprite(
+        SPRITE_ID,
+        old_x,
+        old_y,
+        new_x,
+        new_y,
+        0,
+        false
+    )
+end
+
+while running do
+    local old_x = x
+    local old_y = y
+    local latest_direction = nil
+
+    -- Drain queued events, retaining only the newest direction.
+    while true do
+        local key = gfx.keypressed()
+
+        if key == nil then
+            break
+        end
+
+        if key == "up" or
+           key == "left" or
+           key == "down" or
+           key == "right" then
+            latest_direction = key
+
+        elseif key == "escape" or key == "q" then
+            running = false
+        end
+    end
+
+    if running then
+        if latest_direction == "up" then
+            y = y - MOVE_STEP
+        elseif latest_direction == "left" then
+            x = x - MOVE_STEP
+        elseif latest_direction == "down" then
+            y = y + MOVE_STEP
+        elseif latest_direction == "right" then
+            x = x + MOVE_STEP
+        end
+
+        clamp_position()
+
+        if x ~= old_x or y ~= old_y then
+            move_on_both_pages(old_x, old_y, x, y)
         end
     end
 

@@ -46,9 +46,10 @@ local PLAYER_ID = 1
 -- 0 = run forever
 local MAX_FRAMES = 0
 
--- For maximum speed, keep this at 0.
--- If animation is too fast on a fast PC, try 1, 5, or 10.
-local SLEEP_MS = 0
+-- For maximum speed, keep this at 1.
+-- If animation is too fast on a fast PC, try 3, 5, or 10.
+-- It is recommended to use at least 4 ms of pause per frame with Nano-X backend
+local SLEEP_MS = 4 
 
 local level = {}
 
@@ -572,10 +573,31 @@ local function game_init()
   gfx.set_background()
 end
 
+local function check_exit()
+    while true do
+        local key = gfx.keypressed()
+
+        if key == nil then
+            return
+        end
+
+        if key == "escape" or key == "q" then
+            game_running = false
+            return
+        end
+    end
+end
+
 local function game_frame()
   local frame
   local old_x
   local old_y
+
+  check_exit()
+
+  if not game_running then
+    return
+  end
 
   update_player()
 
@@ -585,14 +607,22 @@ local function game_frame()
     old_x = page_player_x[draw_page_index + 1]
     old_y = page_player_y[draw_page_index + 1]
 
-    gfx.move_sprite(PLAYER_ID,
-                    old_x, old_y,
-                    player_x, player_y,
-                    frame, false)
+    gfx.move_sprite(
+      PLAYER_ID,
+      old_x, old_y,
+      player_x, player_y,
+      frame, false
+    )
   else
     -- First time this hardware page is used:
     -- no old sprite exists on this draw page yet.
-    gfx.draw_sprite(PLAYER_ID, player_x, player_y, frame, false)
+    gfx.draw_sprite(
+      PLAYER_ID,
+      player_x,
+      player_y,
+      frame,
+      false
+    )
   end
 
   mark_player_on_page(draw_page_index)
@@ -606,6 +636,7 @@ local function game_frame()
   end
 
   drawn_frames = drawn_frames + 1
+
   if MAX_FRAMES > 0 and drawn_frames >= MAX_FRAMES then
     game_running = false
   end
