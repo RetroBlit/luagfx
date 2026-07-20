@@ -5,7 +5,7 @@ LuaGFX is a Lua 5.1.5 port for the 16 bit [ELKS OS](https://github.com/ghaerr/el
 
 Left image represents using the VGA mode X backend and the right image the Nano-X backend. Game resolution is 320 x 240 for both. Same code robotjmp.lua is used.
 
-## Supported backends
+## Supported graphics backends
 
 * VGA mode X - heavily optimized. It is suitable for games using sprites, tiles, tilemaps, page flipping, and background restore. It is less suitable for random immediate-mode VGA drawing, such as many circles or arbitrary pixel-heavy graphics.
 * Nano-X - heavily optimized. Performance might be lower than the Mode X backend, because of the Nano-X extra layer, which is client-server based. This mode reduces the need for adding new backends where Nano-X and Lua are ported.
