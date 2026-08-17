@@ -1287,18 +1287,13 @@ int nanox_get_key(GR_KEY *key)
         return 0;
 
     /*
-     * Avoid polling Nano-X while a frame is being constructed.
-     * Nano-X event polling may implicitly flush pending drawing requests.
+     * If no buffered input is available, service Nano-X.
+     * This flushes any pending drawing commands and then polls
+     * pending keyboard/window events.
      */
-    if (!nx_close_pending &&
-        nx_key_queue_count == 0 &&
-        !nx_commands_pending) {
-        nanox_process_events(0);
-    }
+    if (!nx_close_pending && nx_key_queue_count == 0)
+        nanox_service();
 
-    /*
-     * A window close request has priority and is returned once as Escape.
-     */
     if (nx_close_pending) {
         nx_close_pending = 0;
         *key = MWKEY_ESCAPE;
@@ -1308,26 +1303,24 @@ int nanox_get_key(GR_KEY *key)
     return nanox_pop_key(key);
 }
 
-int nanox_sleep_ms(unsigned int ms)
+void nanox_service(void)
 {
     if (!nx_opened)
-        return 0;
+        return;
 
     /*
-     * This is normally already done by gfx.present(). It also supports
-     * Lua code that draws and then calls gfx.sleep() without present().
+     * Send pending drawing commands.
+     *
+     * nanox_flush_pending() is cheap when there is nothing to send,
+     * since it checks nx_commands_pending first.
      */
     nanox_flush_pending();
 
     /*
-     * Wait for the complete requested duration while buffering keyboard,
-     * exposure and close events.
-     *
-     * A zero delay performs only a nonblocking event drain.
+     * Nonblocking drain of currently pending keyboard, exposure
+     * and close events.
      */
-    nanox_process_events(ms);
-
-    return 0;
+    nanox_process_events(0);
 }
 
 void nanox_clear(int color)

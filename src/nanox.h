@@ -12,7 +12,7 @@ int nanox_width(void);
 int nanox_height(void);
 
 void nanox_present(void);
-int nanox_sleep_ms(unsigned int ms);
+void nanox_service(void);
 
 /*
  * Return one buffered Nano-X key-down event.

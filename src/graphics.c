@@ -1,9 +1,9 @@
 #include "graphics.h"
 #include "font.h"
 #include "rendtext.h"
+#include "os.h"
 
 #include <string.h>
-#include <unistd.h>
 
 #ifdef USE_NANOX_BACKEND
 #include "nanox.h"
@@ -423,16 +423,12 @@ void gfx_present(void)
 int gfx_sleep_ms(unsigned int ms)
 {
 #ifdef USE_NANOX_BACKEND
-    if (gfx_opened && gfx_backend == GFX_BACKEND_NANOX) {
-        if (nanox_sleep_ms(ms) != 0) {
-            gfx_err = nanox_error();
-            return -1;
-        }
-        return 0;
-    }
+    if (gfx_opened && gfx_backend == GFX_BACKEND_NANOX)
+        nanox_service();
 #endif
 
-    usleep(1000U * ms);
+    precise_elks_sleep(ms);
+
     return 0;
 }
 

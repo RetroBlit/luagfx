@@ -100,7 +100,7 @@ endif
 USE_NANOX_BACKEND ?= 0
 NANOX_DIR ?= /root/toncho11_microwindows/src
 
-GFX_OBJS = graphics.obj keyboard.obj \
+GFX_OBJS = graphics.obj keyboard.obj os.obj \
 	font.obj font_builtin_8x8.obj rendtext.obj
 NANOX_CLIENT_OBJS =
 
@@ -189,11 +189,14 @@ lbaselib.obj: lbaselib.c graphics.h keyboard.h font.h
 # Common graphics, keyboard, font and text files
 # ------------------------------------------------------------
 
-graphics.obj: graphics.c graphics.h font.h rendtext.h
+graphics.obj: graphics.c graphics.h font.h rendtext.h os.h
 	$(CC) -c $(CFLAGS) -o graphics.obj graphics.c
 
 keyboard.obj: keyboard.c keyboard.h
 	$(CC) -c $(CFLAGS) -o keyboard.obj keyboard.c
+	
+os.obj: os.c os.h
+	$(CC) -c $(CFLAGS) -o os.obj os.c
 
 font.obj: font.c font.h
 	$(CC) -c $(CFLAGS) -o font.obj font.c
