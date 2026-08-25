@@ -1,4 +1,4 @@
-LuaGFX is a Lua 5.1.5 port for the 16 bit [ELKS OS](https://github.com/ghaerr/elks) with an integrated small game engine with multiple graphics backends. It is designed for old retro computers such as 286, 386, 486, and later machines. A future MS-DOS port is also being considered. Because of its Nano-X backend, many more platforms can potentially be supported such as Linux X11, macOS SDL2 or X11, FreeBSD X11, Solaris/Illumos X11, Windows MinGW. Alternatively ELKS and LuaGFX can be used in a x86 emulator such as DOSBox for Solaris or OpenVMS/Alpha for example.
+LuaGFX is a Lua 5.1.5 port for the 16 bit [ELKS OS](https://github.com/ghaerr/elks) with an integrated small game engine with multiple graphics backends. It is designed for old retro computers such as 286, 386, 486, and later machines. A future MS-DOS port is also being considered. Because of its Nano-X backend, many more platforms can potentially be supported such as Linux X11, macOS SDL2 or X11, FreeBSD X11, Solaris/Illumos X11, Windows MinGW. Alternatively ELKS and LuaGFX can be used in a x86 emulator such as DOSBox for Solaris or [OpenVMS/Alpha](https://www.reddit.com/r/OpenVMS/comments/1v0n7g1/dosbox_on_openvms_84/) for example.
 
 <img src="https://github.com/user-attachments/assets/8853e5e9-532c-43e5-970c-b6a05f2d4c2a" width="49%" />  
 <img src="https://github.com/user-attachments/assets/bcc8d0cc-2152-4363-bd5f-c02399083dcf" width="49%" />
@@ -9,7 +9,11 @@ Left image represents using the VGA mode X backend and the right image the Nano-
 
 * VGA mode X - heavily optimized. It is suitable for games using sprites, tiles, tilemaps, page flipping, and background restore. It is less suitable for random immediate-mode VGA drawing, such as many circles or arbitrary pixel-heavy graphics.
 * Nano-X - heavily optimized. Performance might be lower than the Mode X backend, because of the Nano-X extra layer, which is client-server based. This mode reduces the need for adding new backends where Nano-X and Lua are ported.
+
+## Planned graphics backends
+
 * Direct VGA / Mode 13h — planned backend for simple linear-framebuffer drawing. It is expected to be useful for random pixel graphics, effects, circles, and simple demos. It is not the primary target for sprite/tile games because it lacks native page-flipping and background-page model used by the Mode X backend.
+* Serial graphics display - planned backend for intelligent serial-command displays, useful on retro systems without a conventional graphics card. LuaGFX primitives would map to native commands for lines, rectangles, text, bitmaps, and possibly sprites. Possible targets include Digole, 4D Systems, Matrix Orbital, Noritake, and similar UART/RS-232 graphics modules. Performance will depend mainly on baud rate and how much rendering is handled by the display itself.
 
 The API is the same for all graphics backends, but performance will differ. It is best to choose a primary backend in advance, depending on the type of graphics your game needs and whether Nano-X compatibility is important. Please note that start-up time can be long. Expect between 20s on a fast machine and 2 minutes on a 8086 at 8 Mhz on heavy game. Call `gfx.compile_sprite(id)` after defining the sprite, during script initialization, to enable faster rendering.
 
